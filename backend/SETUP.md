@@ -68,48 +68,35 @@ This makes password-reset and account emails send through your verified domain i
 4. **Sender email:** `support@nestfulapp.com` · **Sender name:** `Nestful`.
 5. Save, then send yourself a test password reset once Phase 3 (below) is wired up to confirm it arrives.
 
-### 5. Customize Supabase's password-reset email template
-1. **Authentication** → **Email Templates** → **Reset Password**.
-2. Replace the default copy with something on-brand. Suggested:
+### 5. Customize Supabase's password-reset email template (do this — not yet done)
+1. **Authentication** → **Emails** → **Templates** → **Reset Password** (repeat for both the production and staging Supabase projects — staging's is lower priority but nice for consistency).
+2. Replace the default copy with this on-brand HTML:
 
    **Subject:** Reset your Nestful password
 
-   **Body:**
+   **Body** (paste as HTML — Supabase's template editor accepts it):
+   ```html
+   <div style="background:#F3FBFF;padding:32px 16px;font-family:Arial,Helvetica,sans-serif">
+     <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:22px;padding:32px 28px;color:#1D3557">
+       <div style="text-align:center;font-size:40px;margin-bottom:6px">🪺</div>
+       <div style="text-align:center;font-family:Georgia,serif;font-size:22px;color:#1D3557;font-weight:bold;margin-bottom:24px">Nestful</div>
+       <p style="font-size:15px;line-height:1.65;margin:0 0 14px">Hi there,</p>
+       <p style="font-size:15px;line-height:1.65;margin:0 0 14px">We got a request to reset your Nestful password. This link works for 1 hour:</p>
+       <div style="text-align:center;margin:26px 0 8px">
+         <a href="{{ .ConfirmationURL }}" style="background:#00C2CF;color:#1D3557;text-decoration:none;font-weight:bold;padding:13px 30px;border-radius:999px;font-size:15px;display:inline-block">Reset my password</a>
+       </div>
+       <p style="font-size:13px;color:#5876a3;margin:20px 0 0">If you didn't request this, you can safely ignore this email — your password stays unchanged.</p>
+       <div style="text-align:center;margin-top:28px;padding-top:18px;border-top:1px solid #e2e0d9;font-size:12px;color:#5876a3">Nestful — where openness comes first.</div>
+     </div>
+   </div>
    ```
-   Hi there,
 
-   We got a request to reset your Nestful password. Click below —
-   this link works for 1 hour:
-
-   {{ .ConfirmationURL }}
-
-   If you didn't request this, you can safely ignore this email.
-
-   — The Nestful team
-   ```
-
-### 6. Build the welcome journey in Brevo
-This is the marketing/onboarding side — separate from the transactional reset email above.
-1. **Automations** → **Create an automation** → **Welcome new contacts** (or start from a blank workflow: trigger = "contact added to a list").
-2. First email in the journey — suggested copy (same content already drafted in `app/app.js`, formatted for Brevo):
-
-   **Subject:** Welcome to Nestful 🪺
-
-   **Body:**
-   ```
-   Hi {{contact.FIRSTNAME}},
-
-   Welcome to Nestful — where openness comes first.
-
-   You're in. Finish your Nest Profile to start seeing pre-screened
-   matches who already share your openness to kids and dependents.
-
-   [Finish my profile → nestfulapp.com]
-
-   — The Nestful team
-   ```
-3. Optional second step (2–3 days later): a nudge for anyone who signed up but hasn't finished onboarding — "Your nest is waiting — 2 minutes to finish your profile."
-4. **How contacts get in this journey:** once the app is wired to Supabase (Phase 3), new signups should call Brevo's API to add the contact and enroll them — I can write that call when we get there. Until then, you can test the journey by manually adding your own email as a contact.
+### 6. Welcome journey & other notifications — done (Phase 4, not Brevo Automations)
+Originally planned as a Brevo Automation workflow — superseded by something more
+reliable: a small **Netlify Function** (`netlify/functions/send-email.js`) that
+calls Brevo's transactional email API directly with on-brand HTML templates
+baked into the code. See **Phase 4** below for how it's wired and what's needed
+to activate it (one environment variable, per site).
 
 ---
 
@@ -126,9 +113,53 @@ still use fake/local data, by design, not oversight:
   rather than the real `likes` table, since that table's foreign key
   requires a real member profile on both sides.
 
-**Not yet done:** the Brevo welcome-journey API call (Phase 2, step 6) —
-new signups get a welcome record logged locally but aren't yet enrolled
-in Brevo's automation. And the founder dashboard (`#admin`) can't list
-real members — that needs a **Supabase Edge Function** using the
-service-role key (kept server-side, never in this repo); not a launch
-blocker, just not built yet.
+**Not yet done:** the founder dashboard (`#admin`) can't list real members —
+that needs a **Supabase Edge Function** using the service-role key (kept
+server-side, never in this repo); not a launch blocker, just not built yet.
+
+---
+
+## Phase 4 — Real notification emails (code done, one setup step left)
+
+Four notifications now send for real, on-brand HTML, the moment their
+trigger happens in the app — not simulated, not a Brevo Automation to
+build in their UI:
+
+| Notification | Fires when |
+|---|---|
+| **Welcome** | Right after signup |
+| **Password changed** | Self-service change, or completing a password reset |
+| **Nestful+ waitlist** | Joining the waitlist from a "you've hit today's limit" screen |
+| **Account deleted** | Right before the account is actually removed |
+
+**How it works:** `netlify/functions/send-email.js` is a small server-side
+function (a Netlify Function, not part of the static site) that holds the
+real Brevo **API key** — a genuine secret, unlike the Supabase anon key,
+so it can never live in `app/` where the browser can read it. The app calls
+this function (`fetch("/.netlify/functions/send-email", ...)`), which then
+calls Brevo's transactional email API. The four templates are baked into
+the function itself — the app can only pick *which* one by name, never send
+arbitrary content, which keeps this endpoint from being usable as an open
+spam relay.
+
+### To activate it — one step, done twice
+1. In Brevo: **Senders, Domains & Dedicated IPs → SMTP & API → API Keys tab**
+   (a different tab from the SMTP credentials you already used) → **Generate a
+   new API key** → copy it immediately, it's shown once.
+2. In **each** Netlify site (production *and* staging — environment variables
+   aren't shared between separate sites even in the same team):
+   **Site configuration → Environment variables → Add a variable**.
+   - Key: `BREVO_API_KEY`
+   - Value: the key from step 1
+   - Scope: all deploy contexts is fine
+3. Trigger a redeploy on each site (env var changes only take effect on new
+   deploys — push any small commit, or use Netlify's "Trigger deploy" button).
+
+Until this is done, the function returns an error the app already handles
+gracefully — the local Outbox log (`#admin → Outbox`) still records the
+attempt either way, so nothing breaks and nothing sends silently into a
+void.
+
+**Local dev note:** plain `http-server` doesn't run Netlify Functions, so
+these calls 404/405 locally — harmless, already caught, doesn't affect
+anything else in the app.

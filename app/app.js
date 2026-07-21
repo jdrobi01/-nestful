@@ -179,6 +179,19 @@
     store.addEmail({ to: to, subject: subject, body: body });
   }
 
+  /* Fire-and-forget call to the real sender (netlify/functions/send-email.js).
+     Never blocks the UI and never surfaces a failure to the end user — the
+     local Outbox log above is the fallback record if this silently fails
+     (e.g. BREVO_API_KEY not yet configured on this Netlify site). */
+  function sendRealEmail(type, name, email) {
+    if (!email) return;
+    fetch("/.netlify/functions/send-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: type, name: name, email: email }),
+    }).catch(function () { /* local Outbox log is the fallback record */ });
+  }
+
   function sendWelcomeEmail(account) {
     sendEmail(
       account.email,
@@ -189,6 +202,7 @@
       "who already share your openness to kids and dependents.\n\n" +
       "— The " + BRAND.name + " team"
     );
+    sendRealEmail("welcome", account.name, account.email);
   }
 
   function sendPasswordChangedEmail(account) {
@@ -199,6 +213,30 @@
       "This confirms your " + BRAND.name + " password was just changed. " +
       "If that wasn't you, reset your password right away from the sign-in screen."
     );
+    sendRealEmail("password_changed", account.name, account.email);
+  }
+
+  function sendWaitlistEmail(account) {
+    sendEmail(
+      account.email,
+      "You're on the " + BRAND.name + "+ list ✨",
+      "Hi " + account.name + ",\n\n" +
+      BRAND.name + "+ is coming — unlimited likes, Private Nest mode, a weekly " +
+      "Boost, and more. You'll be first to know when it opens.\n\n" +
+      "— The " + BRAND.name + " team"
+    );
+    sendRealEmail("waitlist", account.name, account.email);
+  }
+
+  function sendAccountDeletedEmail(account) {
+    sendEmail(
+      account.email,
+      "Your " + BRAND.name + " account has been deleted",
+      "Hi " + account.name + ",\n\n" +
+      "This confirms your profile, photo, and Nest Profile answers have been " +
+      "permanently deleted, along with every like and note you sent."
+    );
+    sendRealEmail("account_deleted", account.name, account.email);
   }
 
   /* ---------------- Nest vocabulary ---------------- */
@@ -997,12 +1035,14 @@
     };
     $do.onclick = async function () {
       if ($input.value.trim().toUpperCase() !== "DELETE") return;
+      const departingUser = currentUser(); // grab before the session is gone
       await nestfulDB.deleteMyAccount();
       authUser = null;
       authProfile = null;
       editMode = false;
       draft = null;
       stackIndex = 0;
+      if (departingUser) sendAccountDeletedEmail(departingUser);
       toast("Your account has been deleted");
       viewLanding();
     };
@@ -1788,6 +1828,7 @@
     if ($wl)
       $wl.onclick = async function () {
         await updateUser({ plusWaitlist: true, plusWaitlistAt: new Date().toISOString() });
+        sendWaitlistEmail(currentUser());
         toast("You’re on the list ✨");
         viewComingSoon(trigger);
       };
