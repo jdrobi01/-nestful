@@ -289,9 +289,14 @@
     return r ? r[1] : "";
   }
 
-  /* ---------------- Sample community (demo matching pool) ---------------- */
-
-  const SAMPLES = [
+  /* ---------------- Sample community (demo matching pool) ----------------
+     Fabricated profiles for testing/demoing the deck UI — never shown to
+     real production users, since presenting fake people as real potential
+     matches is a real trust problem for a dating app. Only used on
+     staging/local, where real member-to-member matching doesn't exist yet
+     either. Production users see a genuinely empty deck until real members
+     join (see the empty-deck message in viewHome). */
+  const DEMO_SAMPLES = [
     { name: "Maya", age: 34, city: "Austin, TX", hue: 1, gender: "woman", pronouns: "she/her", seeking: ["man"], contents: ["young"], counts: { young: "1" }, openTo: ["young", "teens", "ready"], rhythm: "alternating",
       bio: "Mom of a 6-year-old adventurer. Sunday pancakes are sacred, museum memberships are maxed out, and I will absolutely beat you at mini golf." },
     { name: "Derek", age: 41, city: "Round Rock, TX", hue: 3, gender: "man", pronouns: "he/him", seeking: ["woman"], contents: ["teens"], counts: { teens: "2" }, openTo: ["young", "teens", "adult", "ready"], rhythm: "fulltime",
@@ -309,6 +314,8 @@
     { name: "Chris", age: 33, city: "Austin, TX", hue: 4, gender: "man", pronouns: "he/him", seeking: ["woman"], contents: ["young"], counts: { young: "2" }, openTo: ["young"], rhythm: "weekends",
       bio: "Single dad of twins. Yes, I can do pigtails. No, not well. Firefighter, so I'm calm in chaos — which twin toddlers provide daily." },
   ];
+
+  const SAMPLES = ENV === "production" ? [] : DEMO_SAMPLES;
 
   /* Mutual pre-screening: each side must be open to everything in the
      other's nest. A partner with no kids/dependents (Nest-Ready) requires
@@ -1599,7 +1606,9 @@
 
     let deck;
     if (!visible.length) {
-      deck = '<div class="empty-deck">Your pre-screened deck is empty right now — in the live app, new compatible members appear as they join.</div>';
+      deck = SAMPLES.length
+        ? '<div class="empty-deck">Your pre-screened deck is empty right now — new compatible members appear here as they join.</div>'
+        : '<div class="empty-deck">You’re one of our first nests here! 🪺<br>Your pre-screened matches will start appearing as more members join — check back soon.</div>';
     } else if (!filtered.length) {
       deck = '<div class="empty-deck">No matches fit these filters — try loosening them a little.</div>';
     } else if (mode === "stack") {
@@ -1673,8 +1682,11 @@
         '<button id="mode-stack" class="' + (mode === "stack" ? "active" : "") + '">🃏 Stack</button>' +
       "</div>" +
       filterBarHTML(p, filters) +
-      '<div class="screen-note">🔒 <strong>' + hidden + " profiles are hidden</strong> from your deck by mutual pre-screening — " +
-        "and you’re hidden from theirs. Nobody gets the awkward reveal." +
+      '<div class="screen-note">' +
+        (SAMPLES.length
+          ? "🔒 <strong>" + hidden + " profiles are hidden</strong> from your deck by mutual pre-screening — " +
+            "and you’re hidden from theirs. Nobody gets the awkward reveal."
+          : "🔒 Every match here is <strong>pre-screened for mutual openness</strong> — no reveals, no awkward surprises.") +
         (isPlus(user)
           ? ""
           : " · ❤ <strong>" + likesLeftToday(user) + " likes</strong> and ✎ <strong>" +
