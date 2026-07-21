@@ -1,16 +1,17 @@
 # Nestful — Backend Setup (Supabase + Brevo)
 
-Everything in this folder is prepped and ready. The steps below are the
-parts that need your own login — account creation, domain verification,
-and DNS. I can't do these for you, but every field you'll be asked to
-fill in is spelled out here, and the copy-paste content (schema, email
-templates) is already written.
+**Status: done for production.** Real accounts (Supabase), real password
+reset emails routed through Brevo via the verified `nestfulapp.com` domain,
+and the app fully wired — this guide is now the reference for how it's
+configured, and the template to repeat for a second (staging) Supabase
+project. `supabase-config.js` and `supabase-client.js` actually live in
+`../app/` (Netlify's site root), not this folder — this folder holds the
+schema, docs, and setup steps only.
 
-**Where things stand when you're done with this guide:** real accounts
-(Supabase) with real password reset emails, and a real sender domain
-(Brevo) ready for welcome journeys — but the live app (`app/app.js`)
-will still be running on localStorage until we do the wiring step
-together at the end. Nothing breaks in the meantime.
+Everything below was originally written as the parts that need your own
+login — account creation, domain verification, and DNS — since I can't do
+those for you. Repeat Phase 1 (with a new project) for the staging
+environment; Phase 2 (Brevo) only needs doing once, production covers both.
 
 ---
 
@@ -32,7 +33,7 @@ together at the end. Nothing breaks in the meantime.
 ### 4. Get your API keys
 1. Left sidebar → **Settings** → **API**.
 2. Copy the **Project URL** and the **anon public** key.
-3. Paste them into [`supabase-config.js`](supabase-config.js) in this folder (the two blank `const` values at the top). Send me those two values (or just confirm the file is filled in) and I'll wire the app to use them.
+3. Paste them into [`../app/supabase-config.js`](../app/supabase-config.js) — for a staging project, they go into the `SUPABASE_STAGING` object; for production, `SUPABASE_PRODUCTION`. Send me the values (or just confirm the file is filled in) and I'll verify it's wired correctly.
    - ⚠️ Never paste the **service_role** key anywhere in this repo — that one bypasses all security and must stay server-side only (Phase 2 below).
 
 ### 5. Turn off forced email confirmation (recommended for BETA)
@@ -112,11 +113,22 @@ This is the marketing/onboarding side — separate from the transactional reset 
 
 ---
 
-## Phase 3 — Wiring the app (when you're ready)
+## Phase 3 — Wiring the app (done)
 
-Once Phase 1 step 4 is done (real URL + anon key in `supabase-config.js`), tell me and I'll:
-1. Swap `app/app.js`'s localStorage calls for the `nestfulDB` functions already written in [`supabase-client.js`](supabase-client.js) — signup, sign-in, forgot/reset password, edit profile, likes, and the matching deck all move from fake `SAMPLES` data to real member profiles.
-2. Add the Brevo API call so new signups actually enroll in the welcome journey above.
-3. Test the whole loop end-to-end against your real project before calling it done.
+`app/app.js` calls the `nestfulDB` functions in [`../app/supabase-client.js`](../app/supabase-client.js)
+for signup, sign-in, forgot/reset password, edit profile, and account
+deletion — all verified live against production. Two things intentionally
+still use fake/local data, by design, not oversight:
+- **The matching deck** still shows the curated `SAMPLES` in `app.js`, not
+  real member-to-member matching — real matching is a follow-up once
+  there's a second real signup (the schema already supports it).
+- **Likes/notes sent to that demo deck** stay in browser localStorage
+  rather than the real `likes` table, since that table's foreign key
+  requires a real member profile on both sides.
 
-**One thing to know now:** the founder dashboard (`#admin`) currently reads every account directly from localStorage — with real accounts, member email addresses live in Supabase's protected `auth.users` table, which even your own logged-in app can't query directly (by design, for security). Rebuilding `#admin` to work for real will need a small **Supabase Edge Function** using the service-role key (kept server-side, never in this repo) — that's a distinct next step after the core migration above, not a blocker to launching signups.
+**Not yet done:** the Brevo welcome-journey API call (Phase 2, step 6) —
+new signups get a welcome record logged locally but aren't yet enrolled
+in Brevo's automation. And the founder dashboard (`#admin`) can't list
+real members — that needs a **Supabase Edge Function** using the
+service-role key (kept server-side, never in this repo); not a launch
+blocker, just not built yet.

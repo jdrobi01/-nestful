@@ -32,17 +32,17 @@ yellow ribbon banner shows whenever you're not on production.
 
 ## Run it locally (free)
 
-Any static file server works — there is no build step. The server must serve
-the **`nestful/` parent folder**, not just `app/`, since `index.html` loads
-files from the sibling `backend/` folder:
+Any static file server works — there is no build step. Serve this `app/`
+folder directly (it's self-contained — `supabase-config.js` and
+`supabase-client.js` live here too, matching Netlify's site root):
 
 ```
-cd C:\Users\jrobi\nestful
+cd C:\Users\jrobi\nestful\app
 npx http-server . -p 4517 -c-1
 ```
 
-Then open **http://localhost:4517/app/** — this will use the staging
-Supabase project (once one exists; see `backend/SETUP.md`), never production.
+Then open **http://localhost:4517** — this will use the staging Supabase
+project (once one exists; see `../backend/SETUP.md`), never production.
 
 ## Rebrand later — the two replaceable files
 
