@@ -1,19 +1,5 @@
 /* ============================================================
-   Nestful — Supabase client wrapper (scaffold, not yet wired in)
-   ------------------------------------------------------------
-   This file is ready to use once supabase-config.js has your real
-   URL + anon key. It is NOT loaded by index.html yet — the live
-   app still runs on localStorage (app/app.js) so the beta keeps
-   working today. Wiring this in means editing app/app.js to call
-   these functions instead of the `store`/`updateUser` helpers.
-   That's a real migration — happy to do it with you once your
-   Supabase project is created and this file has real keys in it.
-
-   Load order when you're ready to wire it in (in index.html,
-   before app.js):
-     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-     <script src="../backend/supabase-config.js"></script>
-     <script src="../backend/supabase-client.js"></script>
+   Nestful — Supabase client wrapper (live, wired into app.js)
    ============================================================ */
 
 const nestfulDB = (function () {
@@ -73,8 +59,25 @@ const nestfulDB = (function () {
     const { data: { user } } = await client.auth.getUser();
     if (!user) return null;
     const { data, error } = await client.from("profiles").select("*").eq("id", user.id).single();
-    if (error) throw error;
-    return data;
+    if (!error) return data;
+
+    // PGRST116 = no row found. Happens for a login whose profile was
+    // removed by deleteMyAccount() (which can only delete the profile —
+    // removing the login itself needs a service-role key that must never
+    // run client-side; see deleteMyAccount below). Rather than dead-end
+    // the user, self-heal: recreate a blank profile so signing back in
+    // just resumes onboarding, same as any first-time signup would.
+    if (error.code === "PGRST116") {
+      const name = (user.user_metadata && user.user_metadata.name) || "Member";
+      const { data: created, error: insertError } = await client
+        .from("profiles")
+        .insert({ id: user.id, name: name, terms_accepted_at: new Date().toISOString() })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+      return created;
+    }
+    throw error;
   }
 
   async function upsertMyProfile(patch) {
