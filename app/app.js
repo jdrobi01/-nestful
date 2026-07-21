@@ -12,16 +12,18 @@
 
   const $app = document.getElementById("app");
 
-  /* ---------------- Environment (production vs sandbox) ----------------
-     Open the app with ?sandbox appended (e.g. localhost:4517/?sandbox) to
-     get a completely separate data namespace for testing — accounts and
-     sessions there never touch production data. */
+  /* ---------------- Environment (production vs staging) ----------------
+     Driven by which domain is actually serving the page (see
+     backend/supabase-config.js's IS_PRODUCTION_HOST) — the same code
+     and same deploy config work on both; only the hostname differs.
+     Staging talks to a completely separate Supabase project, so
+     testing there can never touch real production data. */
 
-  const ENV = new URLSearchParams(location.search).has("sandbox") ? "sandbox" : "production";
+  const ENV = (typeof IS_PRODUCTION_HOST !== "undefined" && IS_PRODUCTION_HOST) ? "production" : "staging";
 
   /* ---------------- Storage layer ---------------- */
 
-  const PREFIX = BRAND.storagePrefix + (ENV === "sandbox" ? "-sandbox" : "");
+  const PREFIX = BRAND.storagePrefix + (ENV === "staging" ? "-staging" : "");
   const KEY_VIEWMODE = PREFIX + ".viewmode";
   const KEY_FILTERS = PREFIX + ".filters";
   const KEY_EMAILS = PREFIX + ".emails";
@@ -2048,10 +2050,10 @@
 
   /* ---------------- Boot ---------------- */
 
-  if (ENV === "sandbox") {
+  if (ENV === "staging") {
     const ribbon = document.createElement("div");
     ribbon.className = "env-ribbon";
-    ribbon.textContent = "🧪 SANDBOX — test data, fully separate from production";
+    ribbon.textContent = "🧪 STAGING — separate database, fully isolated from production";
     document.body.prepend(ribbon);
   }
 

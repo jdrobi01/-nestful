@@ -1,47 +1,48 @@
 # Nestful — Freemium BETA App
 
-**Release state:** freemium beta. Nest filters, Rhythm Match, and see-who-liked-you
-are free; everyone has strict daily caps (8 likes, 2 notes). The Nestful+ purchase
-funnel is fully built but disabled via `FEATURES.upgradeEnabled = false` in
-`brand.js` — flip it to `true` once the LLC has payment processing. Capped users
-see a "coming soon" screen with a waitlist; waitlist joins are tracked per account.
+**Release state:** freemium beta, running on real infrastructure. Nest filters,
+Rhythm Match, and see-who-liked-you are free; everyone has strict daily caps
+(8 likes, 2 notes). The Nestful+ purchase funnel is fully built but disabled
+via `FEATURES.upgradeEnabled = false` in `brand.js` — flip it to `true` once
+the LLC has payment processing. Capped users see a "coming soon" screen with
+a waitlist; waitlist joins are tracked per account.
 
-## Founder tools
+## Real backend (live)
 
-- **Signup dashboard:** open the app with `#admin` (e.g. `localhost:4517/#admin`) —
-  signup totals, onboarding completion, waitlist count, search, per-user table with
-  CSV export. Click a row for account actions: resend welcome email, send a password
-  reset, or delete the account (two-click confirm).
-- **Outbox tab:** every email the app has "sent" (welcome emails, password resets,
-  password-changed confirmations) — no real ESP is connected yet, so nothing leaves
-  the browser. Review copy here before wiring Resend/Postmark/SendGrid into
-  `sendEmail()` in `app.js`.
-- **Password management:** self-service change in Edit profile (current + new
-  password); "Forgot your password?" on the sign-in screen sends a 1-hour token
-  link (`?reset=...`) — same flow a real ESP will send later.
-- **Sandbox vs production:** append `?sandbox` to the URL for a completely separate
-  data environment (yellow ribbon shows when active). Play freely there; production
-  accounts are untouched. `?sandbox#admin` shows the sandbox dashboard.
-- **Legal pages:** `terms.html` and `privacy.html` (drafts — see `../legal/` for the
-  full versions; attorney review required before launch). Signup requires consent
-  and stores an acceptance timestamp on the account.
+- **Accounts & data:** Supabase (Postgres + Auth), wired via `../backend/`.
+  Onboarding, profile edits, sign-in/out, password change, and forgot/reset
+  password are all real — see `backend/SETUP.md` for how it's configured.
+- **Transactional email:** Supabase Auth emails (password reset, etc.) send
+  through Brevo's SMTP relay, from the verified `nestfulapp.com` domain.
+- **Matching deck:** still shows the curated `SAMPLES` in `app.js`, not real
+  member-to-member matching — that's the next step once there's a second
+  real signup (schema already supports it; see `backend/schema.sql`).
+- **Founder visibility:** real member accounts live in Supabase's protected
+  `auth.users` table (Dashboard → Authentication → Users) — the in-app
+  `#admin` dashboard can't query that directly (by design) and says so.
 
-A zero-cost, no-backend demo of the Nestful concept: landing page, account
-creation & sign-in, the three-step "Nest Profile" onboarding pre-screen,
-badge reveal, and a match deck that demonstrates mutual pre-screening.
+## Environments — production vs. staging
+
+The exact same code runs in both; only the domain serving it differs
+(`backend/supabase-config.js` picks the right Supabase project automatically
+based on `location.hostname`). Anything that isn't the literal production
+domain — localhost, previews, a staging deploy — falls back to a separate
+staging Supabase project, so testing can never touch real user data. A
+yellow ribbon banner shows whenever you're not on production.
 
 ## Run it locally (free)
 
 Any static file server works — there is no build step. The server must serve
 the **`nestful/` parent folder**, not just `app/`, since `index.html` loads
-files from the sibling `backend/` folder (your Supabase config):
+files from the sibling `backend/` folder:
 
 ```
 cd C:\Users\jrobi\nestful
 npx http-server . -p 4517 -c-1
 ```
 
-Then open **http://localhost:4517/app/**
+Then open **http://localhost:4517/app/** — this will use the staging
+Supabase project (once one exists; see `backend/SETUP.md`), never production.
 
 ## Rebrand later — the two replaceable files
 
@@ -49,37 +50,14 @@ The brandmark is intentionally isolated:
 
 | File | What lives there |
 |---|---|
-| `brand.js` | App name, tagline, logo mark (emoji now, `<img>` snippet later), badge names ("Full Nest" / "Nest-Ready"), storage namespace |
+| `brand.js` | App name, tagline, logo mark (emoji now, `<img>` snippet later), badge names ("Full Nest" / "Nest-Ready"), storage namespace, support email |
 | `brand.css` | All colors, fonts, corner radii, badge colors |
 
 Nothing brand-specific exists anywhere else. Swap those two files and the
 whole app rebrands.
 
-## How accounts work (demo grade)
+## Deployment
 
-- Accounts live in the browser's `localStorage` under `nestful.accounts`.
-- Passwords are salted + SHA-256 hashed via WebCrypto before storage — so
-  plaintext passwords are never stored, but this is **demo-grade only**.
-  A real launch needs server-side auth (e.g. Supabase/Firebase free tier
-  is a natural next step and keeps the "free first" constraint).
-- "Sign out" keeps the account; clearing browser data resets everything.
-
-## Free hosting when you want a shareable link
-
-The app is pure static files, so all of these free tiers work as-is:
-
-- **GitHub Pages** — push this folder to a repo, enable Pages.
-- **Netlify / Vercel** — drag-and-drop the folder, free tier.
-- **Cloudflare Pages** — same, free tier.
-
-## Upgrade path
-
-1. Swap localStorage for Supabase (free tier: real auth + Postgres).
-2. Replace the sample match pool (`SAMPLES` in `app.js`) with real profiles.
-3. Add photos, messaging, and the safety features from the business plan
-   (`../business-plan.md`, Section 8) before any public launch.
-
-**Scaffolding for step 1 is ready** in [`../backend/`](../backend/SETUP.md) —
-schema, storage bucket setup, Supabase↔Brevo email wiring, and ready-to-paste
-welcome/reset email copy. Follow `backend/SETUP.md` in order; it's written as
-a click-by-click guide for the parts only you can do (account creation, DNS).
+Deployed via Netlify, connected to this git repo — `main` branch deploys to
+`nestfulapp.com`; `staging` branch deploys to a separate staging URL. Push
+to `staging` first, verify there, then merge to `main` for production.

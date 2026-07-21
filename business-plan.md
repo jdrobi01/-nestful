@@ -233,13 +233,18 @@ upgrade prompt attached to safety features or the pre-screen itself.
   not legal advice), DMCA agent registration with the U.S. Copyright Office, and
   state-specific auto-renewal disclosures before Nestful+ payments begin.
 
-## 14. Hosting & User Management (future-proofed path)
+## 14. Hosting & User Management (live as of July 2026)
 
 | Stage | Hosting | Accounts / signup tracking |
 |---|---|---|
-| **Beta (now)** | Static app; free host (Netlify/Cloudflare Pages). `?sandbox` URL gives an isolated test environment; production data untouched | Browser localStorage; founder dashboard at `#admin` with signup counts, waitlist, CSV export |
-| **Hosted beta** | Same host; `nestful.com` on production branch, staging on a password-protected branch deploy (Netlify gives both free) | **Supabase free tier**: real auth + Postgres; signups visible in Supabase dashboard; admin panel reads the same tables |
-| **Scale** | Same static front end + Supabase paid tier; add analytics (privacy-respecting, e.g., Plausible) | Row-level security, email verification, moderation queue |
+| ~~Local demo~~ *(superseded)* | Static app, localStorage only | Browser localStorage; founder dashboard at `#admin` |
+| **Hosted beta (current)** | Netlify (free), custom domain `nestfulapp.com`. `main` branch → production; `staging` branch → separate staging URL, both auto-deploying from git | **Supabase** (free tier): real auth + Postgres + Row Level Security; signups visible in Supabase dashboard (Authentication → Users). Transactional email (password reset) via **Brevo** SMTP, verified sender domain `nestfulapp.com` |
+| **Scale** | Same static front end + Supabase paid tier; add analytics (privacy-respecting, e.g., Plausible) | Edge Function (service-role key, server-side) for a real founder admin panel; email verification; moderation queue |
+
+**Staging isolation:** a completely separate Supabase project holds staging
+data, selected automatically by hostname (`backend/supabase-config.js`) —
+anything that isn't exactly `nestfulapp.com` defaults to staging, so a
+mistake can't accidentally touch real user data.
 
 Chosen because each step reuses the previous one — the front end never needs a
 rewrite, and Supabase's auth/Postgres carry from free tier to scale.
