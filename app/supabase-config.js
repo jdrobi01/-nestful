@@ -26,8 +26,8 @@ const SUPABASE_PRODUCTION = {
 };
 
 const SUPABASE_STAGING = {
-  url: "",       // fill in once the staging Supabase project exists
-  anonKey: "",
+  url: "https://kkgcjridxbjncvkcazdf.supabase.co",
+  anonKey: "sb_publishable_V8b16q6ciNv86oroUYUWag_Jb_e6fOz",
 };
 
 const ACTIVE_SUPABASE = IS_PRODUCTION_HOST ? SUPABASE_PRODUCTION : SUPABASE_STAGING;
