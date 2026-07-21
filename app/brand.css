@@ -1,0 +1,53 @@
+/* ============================================================
+   BRAND THEME TOKENS — REPLACEABLE SECTION
+   ------------------------------------------------------------
+   All colors, fonts, and shape language live here.
+   To rebrand, edit ONLY this file (plus brand.js for copy).
+
+   Current theme: "Robin's Egg" — bright, semi-muted blues
+   #00C2CF · #F3FBFF · #FFE66D · #A8DADC · #1D3557
+   ============================================================ */
+
+:root {
+  /* Core palette */
+  --brand-primary: #00C2CF;        /* robin egg teal */
+  --brand-primary-dark: #0093A3;
+  --brand-primary-deep: #1D3557;   /* deep night navy */
+  --brand-primary-soft: #DDF5F7;
+  --brand-accent: #FFE66D;         /* sunny yellow */
+  --brand-accent-soft: #FFF6CF;
+  --brand-muted: #A8DADC;          /* muted egg blue */
+
+  /* Surfaces & text */
+  --surface: #ffffff;
+  --surface-alt: #F3FBFF;          /* ice white page background */
+  --ink: #1D3557;
+  --ink-soft: #5876a3;
+  --line: #d3e7ee;
+
+  /* Feedback */
+  --danger: #c05252;
+
+  /* Shape & type */
+  --radius-lg: 22px;
+  --radius-md: 14px;
+  --radius-pill: 999px;
+  --font-body: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: Georgia, "Times New Roman", serif;
+
+  /* Badge colors */
+  --badge-full-bg: var(--brand-primary-soft);
+  --badge-full-ink: #00707d;
+  --badge-ready-bg: var(--brand-accent-soft);
+  --badge-ready-ink: #8a6d15;
+
+  /* Avatar fallback hues (initials circles) */
+  --avatar-1: #00C2CF;
+  --avatar-2: #A8DADC;
+  --avatar-3: #1D3557;
+  --avatar-4: #FFE66D;
+}
+
+/* ============================================================
+   END BRAND THEME TOKENS
+   ============================================================ */

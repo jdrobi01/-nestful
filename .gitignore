@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Real secrets — never commit these
+support@nestful-pw.txt
+*-pw.txt
+*.env
+.env.*
