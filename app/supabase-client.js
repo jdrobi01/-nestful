@@ -87,12 +87,14 @@ const nestfulDB = (function () {
   }
 
   async function deleteMyAccount() {
-    // Client-side delete removes the profiles row (RLS-permitted),
-    // but auth.users itself can only be deleted with the service
-    // role key — that needs a small Edge Function. See SETUP.md
-    // Phase 2. Until that exists, deletion is profile-level only.
-    const { data: { user } } = await client.auth.getUser();
-    await client.from("profiles").delete().eq("id", user.id);
+    // Calls the delete-account Edge Function (backend/edge-functions/
+    // delete-account/) — the only place the service_role key is used,
+    // server-side only. It derives the target user from the caller's
+    // own verified session, deletes auth.users, and that cascades to
+    // remove the profiles row too. This actually removes the login,
+    // unlike a client-side-only profile delete.
+    const { error } = await client.functions.invoke("delete-account");
+    if (error) throw error;
     await signOut();
   }
 
