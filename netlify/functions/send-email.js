@@ -21,6 +21,20 @@ const ALLOWED_ORIGINS = [
   "https://www.nestfulapp.com",
 ];
 
+/* Also allow any Netlify-generated URL (staging, deploy previews) — these
+   are unpredictable subdomains we can't list ahead of time. This is a
+   casual-abuse deterrent, not a real security boundary either way (see
+   note below), so the broader match is fine. */
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.some((o) => origin.startsWith(o))) return true;
+  try {
+    return new URL(origin).hostname.endsWith(".netlify.app");
+  } catch {
+    return false;
+  }
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -138,7 +152,7 @@ exports.handler = async function (event) {
   // send cap is the actual backstop. A determined attacker can spoof Origin,
   // but this stops drive-by scanning from other sites.
   const origin = event.headers.origin || event.headers.referer || "";
-  if (!ALLOWED_ORIGINS.some((o) => origin.startsWith(o))) {
+  if (!isAllowedOrigin(origin)) {
     return { statusCode: 403, body: "Forbidden origin" };
   }
 
