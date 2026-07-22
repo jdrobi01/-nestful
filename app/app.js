@@ -156,6 +156,7 @@
       premiumSince: authProfile.premium_since,
       plusWaitlist: !!authProfile.plus_waitlist,
       plusWaitlistAt: authProfile.plus_waitlist_at,
+      isAdmin: !!authProfile.is_admin,
       profile: onboarded ? dbProfileToLocal(authProfile) : null,
     };
   }
@@ -858,7 +859,26 @@
     }[c]));
   }
 
+  // Persistent reassurance banner whenever the founder/admin ghost-viewer
+  // account is signed in — lives outside #app (like the staging ribbon)
+  // so it survives every render() call without being re-created each time.
+  function syncAdminRibbon() {
+    const user = currentUser();
+    const show = !!(user && user.isAdmin);
+    let ribbon = document.getElementById("admin-ribbon");
+    if (show && !ribbon) {
+      ribbon = document.createElement("div");
+      ribbon.id = "admin-ribbon";
+      ribbon.className = "env-ribbon admin-ribbon";
+      ribbon.textContent = "👁 Admin mode — invisible to members, actions never reach real users";
+      document.body.prepend(ribbon);
+    } else if (!show && ribbon) {
+      ribbon.remove();
+    }
+  }
+
   function render(html) {
+    syncAdminRibbon();
     $app.innerHTML = '<div class="view">' + html + "</div>";
     window.scrollTo(0, 0);
   }
@@ -1039,7 +1059,10 @@
     if (note) usage.notes = (usage.notes || []).concat(new Date().toISOString());
     store.saveDemoState(user.id, { likes: likes, usage: usage });
 
-    if (match._id && nestfulDB) {
+    // Admin ghost-viewer mode: the UI responds exactly like a real like,
+    // but nothing ever reaches Supabase — a real member must never get a
+    // notification/email from an account that isn't really theirs to get.
+    if (match._id && nestfulDB && !user.isAdmin) {
       nestfulDB.sendLike(match._id, note).catch(function (err) {
         console.error("Real like didn't save to Supabase:", err);
       });
@@ -2393,6 +2416,8 @@
       notifLoadedFor = null;
       notifAnimatedCount = null;
       notifPanelOpen = false;
+      adminStats = null;
+      adminStatsLoadedFor = null;
       viewLanding();
     };
     function startEdit() {
@@ -2721,43 +2746,90 @@
     if (openNote) showNotePanel();
   }
 
-  /* ----- Founder dashboard: email log + admin notes (#admin) -----
-     Member accounts now live in Supabase's protected auth.users table,
-     which even this signed-in app can't query directly (by design —
-     that's what "protected" means). A real member list here needs a
-     small Supabase Edge Function using the service-role key, kept
-     server-side only. See backend/SETUP.md, Phase 3 follow-up. */
+  /* ----- Founder dashboard: hidden admin stats + email log (#admin) -----
+     Gated by currentUser().isAdmin (see boot() — this is only reachable
+     after refreshAuthState() resolves). Anyone else hitting #admin,
+     signed in or not, gets silently redirected — no hint that a founder
+     view even exists. Real per-member data still isn't listable here
+     (auth.users stays protected, by design); this is aggregate counts
+     only, via the admin-stats Edge Function. */
 
-  let adminTab = "users";
+  let adminTab = "stats";
+  let adminStats = null;
+  let adminStatsLoadedFor = null; // authUser.id this cache belongs to
+
+  function ensureAdminStatsLoaded(userId) {
+    if (!nestfulDB || adminStatsLoadedFor === userId) return;
+    adminStatsLoadedFor = userId;
+    nestfulDB.getAdminStats()
+      .then(function (stats) {
+        adminStats = stats;
+        viewAdmin();
+      })
+      .catch(function (err) {
+        console.error("Couldn't load admin stats:", err && (err.message || err));
+        adminStatsLoadedFor = null; // allow a retry on the next render
+      });
+  }
 
   function viewAdmin() {
+    const user = currentUser();
+    if (!user || !user.isAdmin) {
+      history.replaceState(null, "", location.pathname + location.search);
+      return user ? viewHome() : viewLanding();
+    }
     if (adminTab === "outbox") return viewAdminOutbox();
+
+    ensureAdminStatsLoaded(user.id);
 
     render(
       brandRow() +
       '<h2 class="view-title">Founder dashboard</h2>' +
-      '<p class="view-sub">Environment: <strong>' + ENV + "</strong></p>" +
+      '<p class="view-sub">Environment: <strong>' + ENV + "</strong> · signed in as " + esc(user.name) + "</p>" +
       adminTabsHTML() +
-      '<div class="card">' +
-        '<p class="detail-bio">Real member accounts now live in Supabase — emails and ' +
-          "login records sit in the protected <code>auth.users</code> table, which even " +
-          "this app can't query directly (by design, for security). A member list here " +
-          "needs a small <strong>Supabase Edge Function</strong> using the service-role " +
-          "key (kept server-side, never shipped to the browser) — see " +
-          "<code>backend/SETUP.md</code> for the plan.</p>" +
-        '<p class="detail-bio" style="margin-top:10px">For now, see real signups directly ' +
-          "in your Supabase project: <strong>Authentication → Users</strong>.</p>" +
-      "</div>" +
+      adminStatsHTML() +
       '<button class="btn btn-ghost" id="adm-back">← Back to the app</button>'
     );
 
     wireAdminChrome();
   }
 
+  function adminStatCard(icon, value, label) {
+    return (
+      '<div class="admin-stat">' +
+        '<span class="admin-stat-icon">' + icon + "</span>" +
+        '<span class="admin-stat-num">' + value + "</span>" +
+        '<span class="admin-stat-label">' + esc(label) + "</span>" +
+      "</div>"
+    );
+  }
+
+  function adminStatsHTML() {
+    if (!adminStats) {
+      return '<div class="card"><div class="empty-deck">Loading stats…</div></div>';
+    }
+    return (
+      '<div class="card">' +
+        '<div class="admin-stat-grid">' +
+          adminStatCard("🪺", adminStats.totalMembers, "Real members") +
+          adminStatCard(BRAND.badges.full.icon, adminStats.fullNest, "Full Nest") +
+          adminStatCard(BRAND.badges.ready.icon, adminStats.nestReady, "Nest-Ready") +
+          adminStatCard("❤", adminStats.totalLikes, "Likes sent") +
+          adminStatCard("✎", adminStats.totalNotes, "Notes with a message") +
+        "</div>" +
+        '<p class="deck-hint" style="margin-top:16px;text-align:left">' +
+          "Page-visit and click-level analytics (e.g. login page views) aren’t tracked yet — " +
+          "that needs a small event-logging system as a follow-up build, separate from these " +
+          "counts (which come straight from the real profiles/likes tables)." +
+        "</p>" +
+      "</div>"
+    );
+  }
+
   function adminTabsHTML() {
     return (
       '<div class="view-toggle" style="margin-bottom:14px">' +
-        '<button id="adm-tab-users" class="' + (adminTab === "users" ? "active" : "") + '">👤 Users</button>' +
+        '<button id="adm-tab-stats" class="' + (adminTab === "stats" ? "active" : "") + '">📊 Stats</button>' +
         '<button id="adm-tab-outbox" class="' + (adminTab === "outbox" ? "active" : "") + '">✉ Outbox</button>' +
       "</div>"
     );
@@ -2768,7 +2840,7 @@
       history.replaceState(null, "", location.pathname + location.search);
       boot();
     };
-    document.getElementById("adm-tab-users").onclick = function () { adminTab = "users"; viewAdmin(); };
+    document.getElementById("adm-tab-stats").onclick = function () { adminTab = "stats"; viewAdmin(); };
     document.getElementById("adm-tab-outbox").onclick = function () { adminTab = "outbox"; viewAdmin(); };
   }
 
@@ -2777,9 +2849,8 @@
     render(
       brandRow() +
       '<h2 class="view-title">Founder dashboard</h2>' +
-      '<p class="view-sub">Every email the app has "sent" during this beta — no real ESP is connected yet, ' +
-        "so nothing leaves this browser. Review the copy here, then wire a provider " +
-        "(Resend, Postmark, SendGrid) and swap it into <code>sendEmail()</code>.</p>" +
+      '<p class="view-sub">Local activity log for this browser only — welcome/reset/notification ' +
+        "emails also really send via Brevo; this is just a record of what was attempted.</p>" +
       adminTabsHTML() +
       (emails.length
         ? emails.map(function (m) {
@@ -2823,12 +2894,16 @@
 
   async function boot() {
     if (isRecoveryLink) return viewResetPassword();
-    if (location.hash === "#admin") return viewAdmin();
     try {
       await refreshAuthState();
     } catch (err) {
       return viewConnectionError(err);
     }
+    // Checked AFTER refreshAuthState() (not before, like every other
+    // route) specifically so viewAdmin() can rely on currentUser().isAdmin
+    // being populated — it silently redirects anyone who isn't a real,
+    // signed-in admin rather than showing even a hint of a founder screen.
+    if (location.hash === "#admin") return viewAdmin();
     const user = currentUser();
     if (user && user.profile) viewHome();
     else if (user) {
