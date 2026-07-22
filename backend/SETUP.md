@@ -103,19 +103,36 @@ to activate it (one environment variable, per site).
 ## Phase 3 — Wiring the app (done)
 
 `app/app.js` calls the `nestfulDB` functions in [`../app/supabase-client.js`](../app/supabase-client.js)
-for signup, sign-in, forgot/reset password, edit profile, and account
-deletion — all verified live against production. Two things intentionally
-still use fake/local data, by design, not oversight:
-- **The matching deck** still shows the curated `SAMPLES` in `app.js`, not
-  real member-to-member matching — real matching is a follow-up once
-  there's a second real signup (the schema already supports it).
-- **Likes/notes sent to that demo deck** stay in browser localStorage
-  rather than the real `likes` table, since that table's foreign key
-  requires a real member profile on both sides.
+for signup, sign-in, forgot/reset password, edit profile, account deletion,
+and real member-to-member matching/likes — all verified live against
+production. See **Phase 5** for how real matching and real likes work.
+
+The curated `SAMPLES` deck in `app.js` still exists as a demo/staging-only
+supplement — it's forced empty on production (`IS_PRODUCTION_HOST`, guarded
+by a startup safety canary that fails loud if that's ever violated) so a
+brand-new production account still has *something* pre-screened to look at
+before more real members join, without ever mixing fake profiles into a
+real user's deck.
 
 **Not yet done:** the founder dashboard (`#admin`) can't list real members —
 that needs a **Supabase Edge Function** using the service-role key (kept
 server-side, never in this repo); not a launch blocker, just not built yet.
+
+### Deleting an account for real (Edge Function, done)
+Account deletion needs to remove the actual login (`auth.users`), not just
+the `profiles` row — RLS structurally prevents a client from doing that
+itself, since only the `service_role` key can delete another user's auth
+record, even their own. `backend/edge-functions/delete-account/index.ts`
+handles this: it verifies the caller's own session, then uses an admin
+client to delete `auth.users` (which cascades to `profiles` via its foreign
+key). Deployed to **both** Supabase projects via the dashboard (**Edge
+Functions → Create a new function** → paste the code → **Deploy**), with
+one setting flipped afterward in the function's **Settings** tab:
+**"Verify JWT with legacy secret" → OFF** (this project uses the newer
+publishable/secret key system, not the legacy one — every Edge Function
+here needs this off, including `notify-like` in Phase 5). No extra secrets
+needed beyond the ones Supabase auto-injects (`SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`).
 
 ---
 
@@ -163,3 +180,77 @@ void.
 **Local dev note:** plain `http-server` doesn't run Netlify Functions, so
 these calls 404/405 locally — harmless, already caught, doesn't affect
 anything else in the app.
+
+---
+
+## Phase 5 — Real matching, real likes, and like/message notifications (done)
+
+Members now see real signups, not just the demo `SAMPLES` deck — filtered
+through the same mutual pre-screening logic (`mutuallyOpen`,
+`genderCompatible`, `countsAcceptable` in `app.js`) applied to real profile
+rows from `nestfulDB.browseProfiles()`. Liking or noting a real member calls
+`nestfulDB.sendLike()`, which writes a real row to `public.likes` — daily/
+weekly cap *tracking* stays in browser localStorage either way (a future
+hardening item, not required for caps to work correctly today).
+
+A notification bell in the home header (🪺, shakes and hatches into 💌 the
+moment there's something unread) shows real likes/notes received, backed by
+`profiles.last_notifications_seen_at` and two `supabase-client.js` helpers:
+`whoLikedMeSinceLastSeen()` and `markNotificationsSeen()`.
+
+When someone receives a like or note, they also get a real email — this
+needs one more server-side piece beyond the app itself, since looking up a
+recipient's email address requires the `service_role` key (their email
+lives in the protected `auth.users` table, unreachable from any signed-in
+client, by design).
+
+### 1. Schema — one column, one index
+Already in [`schema.sql`](schema.sql); if you're applying this to a project
+that predates Phase 5, just run:
+```sql
+alter table public.profiles
+  add column if not exists last_notifications_seen_at timestamptz default now();
+
+create index if not exists likes_likee_created_idx
+  on public.likes (likee_id, created_at desc);
+```
+
+### 2. Deploy the notify-like Edge Function
+**Edge Functions → Create a new function** → name it `notify-like` → paste
+in [`edge-functions/notify-like/index.ts`](edge-functions/notify-like/index.ts)
+→ **Deploy** → in its **Settings** tab, turn **"Verify JWT with legacy
+secret" OFF** (same reason as `delete-account` in Phase 3).
+
+It doesn't call Brevo directly — it looks up who to email and what to say,
+then hands off to the already-built, already-verified
+`netlify/functions/send-email.js` (now with two more templates:
+`new_like` and `new_message`), so there's only one place in the whole
+system that ever talks to Brevo's API.
+
+### 3. Set its secret
+In the function's secrets (or **Edge Functions → Secrets**, depending on
+your dashboard version):
+- **Name:** `SEND_EMAIL_ENDPOINT`
+- **Value:** `https://nestfulapp.com/.netlify/functions/send-email` for
+  production, or your staging Netlify site's equivalent
+  `/.netlify/functions/send-email` URL for staging.
+
+### 4. Create the Database Webhook
+**Database → Webhooks** (if it's not under Database in your dashboard
+version, `Ctrl/Cmd K` → search "webhooks", or go directly to
+`/project/<ref>/database/hooks`) → **Create a new hook**:
+- **Table:** `public.likes`, **Events:** `Insert` only
+- **Type of webhook:** `Supabase Edge Functions`
+- **Edge Function:** `notify-like`, **Method:** `POST`, default headers
+
+This has to be **Insert** only — re-liking someone (which upserts the same
+row) should not re-notify them every time.
+
+### Repeat all four steps on both Supabase projects
+Staging and production are separate projects with separate secrets and
+separate webhooks — nothing here is shared between them. Verify on staging
+first: two real test accounts, one likes the other with a note, check the
+`notify-like` function's own **Logs** tab for a `200`/`{"ok":true}`
+invocation, and check Brevo's **Transactional → Logs** for the send attempt
+(a hard bounce is fine/expected for a synthetic test account's fake email —
+it confirms the pipeline ran, which is what matters).
