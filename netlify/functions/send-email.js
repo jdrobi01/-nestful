@@ -72,8 +72,10 @@ function button(label, href) {
   );
 }
 
-function templates(rawName) {
+function templates(rawName, rawSenderName, rawNote) {
   const name = esc(rawName || "there");
+  const senderName = esc(rawSenderName || "Someone");
+  const note = rawNote ? esc(rawNote) : "";
   return {
     welcome: {
       subject: "Welcome to Nestful 🪺",
@@ -126,6 +128,42 @@ function templates(rawName) {
       ),
     },
 
+    new_like: {
+      subject: senderName + " likes your nest 🪺",
+      html: layout(
+        '<p style="font-size:15px;line-height:1.65;margin:0 0 14px">Hi ' + name + ",</p>" +
+        '<p style="font-size:15px;line-height:1.65;margin:0 0 14px">' +
+          "<strong>" + senderName + "</strong> just liked your Nest Profile. They already " +
+          "know where you stand on kids — no reveals, no surprises, just someone who said " +
+          "yes before saying hi." +
+        "</p>" +
+        '<p style="font-size:15px;line-height:1.65;margin:0">' +
+          "See who it is and like them back to open the conversation." +
+        "</p>" +
+        button("See who liked me", "https://nestfulapp.com")
+      ),
+    },
+
+    new_message: {
+      subject: senderName + " sent you a note 🪺",
+      html: layout(
+        '<p style="font-size:15px;line-height:1.65;margin:0 0 14px">Hi ' + name + ",</p>" +
+        '<p style="font-size:15px;line-height:1.65;margin:0 0 14px">' +
+          "<strong>" + senderName + "</strong> liked your Nest Profile and left you a note:" +
+        "</p>" +
+        (note ?
+          '<div style="background:#F3FBFF;border-radius:14px;padding:16px 18px;' +
+            'font-size:15px;line-height:1.6;color:#1D3557;margin:0 0 18px;font-style:italic">' +
+            "“" + note + "”" +
+          "</div>"
+        : "") +
+        '<p style="font-size:15px;line-height:1.65;margin:0">' +
+          "Like them back to start the conversation." +
+        "</p>" +
+        button("See my notes", "https://nestfulapp.com")
+      ),
+    },
+
     account_deleted: {
       subject: "Your Nestful account has been deleted",
       html: layout(
@@ -168,15 +206,21 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: "Invalid JSON" };
   }
 
-  const { type, name, email } = payload;
+  const { type, name, email, senderName, note } = payload;
   if (!email || typeof email !== "string" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return { statusCode: 400, body: "Invalid email" };
   }
   if (name !== undefined && (typeof name !== "string" || name.length > 100)) {
     return { statusCode: 400, body: "Invalid name" };
   }
+  if (senderName !== undefined && (typeof senderName !== "string" || senderName.length > 100)) {
+    return { statusCode: 400, body: "Invalid senderName" };
+  }
+  if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
+    return { statusCode: 400, body: "Invalid note" };
+  }
 
-  const template = templates(name)[type];
+  const template = templates(name, senderName, note)[type];
   if (!template) {
     return { statusCode: 400, body: "Unknown template type: " + type };
   }

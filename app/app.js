@@ -315,7 +315,34 @@
       bio: "Single dad of twins. Yes, I can do pigtails. No, not well. Firefighter, so I'm calm in chaos — which twin toddlers provide daily." },
   ];
 
-  const SAMPLES = ENV === "production" ? [] : DEMO_SAMPLES;
+  /* ============================================================
+     🔒 PERMANENT SAFETY GATE — DO NOT WEAKEN OR REMOVE
+     Fake/synthetic profiles (DEMO_SAMPLES) must NEVER be visible
+     to a real production user. This check is deliberately direct
+     (IS_PRODUCTION_HOST, not the derived ENV string) to minimize
+     the surface area for a future bug to slip between the check
+     and the hostname it's supposed to gate on.
+
+     Defense in depth: a loud, unmissable startup canary below
+     re-verifies this invariant every single time the app boots,
+     on every environment — if it's ever violated, the app fails
+     LOUD (visible error banner + console.error), not silently.
+     ============================================================ */
+  const SAMPLES = (typeof IS_PRODUCTION_HOST !== "undefined" && IS_PRODUCTION_HOST) ? [] : DEMO_SAMPLES;
+
+  (function safetyCanary() {
+    const isProd = typeof IS_PRODUCTION_HOST !== "undefined" && IS_PRODUCTION_HOST;
+    if (isProd && SAMPLES.length > 0) {
+      const msg = "🚨 SAFETY VIOLATION: " + SAMPLES.length + " fake demo profiles are visible on PRODUCTION. This must never happen — fix immediately.";
+      console.error(msg);
+      document.addEventListener("DOMContentLoaded", function () {
+        const banner = document.createElement("div");
+        banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#c00;color:#fff;padding:14px;text-align:center;font-family:sans-serif;font-weight:bold;";
+        banner.textContent = msg;
+        document.body.prepend(banner);
+      });
+    }
+  })();
 
   /* Mutual pre-screening: each side must be open to everything in the
      other's nest. A partner with no kids/dependents (Nest-Ready) requires
@@ -403,6 +430,25 @@
     let sum = 0;
     for (let i = 0; i < name.length; i++) sum += name.charCodeAt(i);
     return (sum % 4) + 1;
+  }
+
+  // Real member profiles (see dbRowToMatch below) don't collect age yet —
+  // demo SAMPLES do. Omit the ", 34" suffix entirely rather than show a
+  // blank or a fake number.
+  function ageSuffix(s) {
+    return s.age ? ", " + s.age : "";
+  }
+
+  // Stable identity across both demo SAMPLES (keyed by name — they have no
+  // real id) and real member profiles (keyed by their Supabase auth id).
+  // Used anywhere a card needs a click/data attribute so real likes can be
+  // sent to the right person instead of just a display name.
+  function matchKey(s) {
+    return s._id ? "r:" + s._id : "d:" + s.name;
+  }
+
+  function findMatchByKey(key) {
+    return SAMPLES.concat(realMatches).find(function (s) { return matchKey(s) === key; });
   }
 
   function toast(msg) {
@@ -495,21 +541,29 @@
     return isPlus(user) ? "this week" : "today";
   }
 
-  /* Likes against the demo SAMPLES deck stay local (not written to
-     Supabase's real `likes` table, which has a foreign key to real
-     member profiles) — this is what powers the daily cap UI today.
-     Once matching moves to real members (backend/SETUP.md Phase 3
-     follow-up), this swaps for nestfulDB.sendLike(). */
-  function recordLike(sampleName, note) {
+  /* Daily/weekly cap tracking always stays local (not the real
+     usage_events table — a future hardening item, not needed for caps
+     to work correctly in BETA). Real matches ALSO get a real row in
+     Supabase's `likes` table so the other member actually receives it
+     (and, via the notify-like Edge Function + email, gets notified) —
+     demo SAMPLES have no real id and can never write there. */
+  function recordLike(match, note) {
     const user = currentUser();
     if (!user) return;
+    const key = matchKey(match);
     const state = store.getDemoState(user.id);
-    const likes = (state.likes || []).filter(function (l) { return l.name !== sampleName; });
-    likes.push({ name: sampleName, note: note || "", at: new Date().toISOString() });
+    const likes = (state.likes || []).filter(function (l) { return l.key !== key; });
+    likes.push({ key: key, note: note || "", at: new Date().toISOString() });
     const usage = state.usage || { likes: [], notes: [] };
     usage.likes = (usage.likes || []).concat(new Date().toISOString());
     if (note) usage.notes = (usage.notes || []).concat(new Date().toISOString());
     store.saveDemoState(user.id, { likes: likes, usage: usage });
+
+    if (match._id && nestfulDB) {
+      nestfulDB.sendLike(match._id, note).catch(function (err) {
+        console.error("Real like didn't save to Supabase:", err);
+      });
+    }
   }
 
   /* ---------------- Onboarding draft state ---------------- */
@@ -1385,12 +1439,156 @@
     return me.seeking.includes(other.gender) && other.seeking.includes(me.gender);
   }
 
+  /* ----- Real matches (real member profiles, from Supabase) -----
+     SAMPLES stays the curated/demo deck (never shown on production —
+     see the safety canary above). Real signups are layered in on top
+     so both staging (SAMPLES + real) and production (real only, since
+     SAMPLES is forced empty there) share the exact same code path. */
+
+  let realMatches = [];
+  let realMatchesLoadedFor = null; // authUser.id this cache belongs to
+
+  function isOnboardedRow(row) {
+    return !!(row.city && row.bio);
+  }
+
+  // Real profiles don't collect age yet (see ageSuffix above) or a photo
+  // upload's own hue — hue is derived from the name, same as a member's
+  // own avatar (see userHue) so it stays stable without a stored column.
+  function dbRowToMatch(row) {
+    return {
+      _id: row.id,
+      name: row.name,
+      age: null,
+      city: row.city || "",
+      hue: userHue(row.name || "?"),
+      gender: row.gender || "",
+      genderDetail: row.gender_detail || "",
+      pronouns: row.pronouns || "",
+      seeking: row.seeking || [],
+      contents: row.contents || [],
+      counts: row.counts || {},
+      rhythm: row.rhythm || "",
+      openTo: row.open_to || [],
+      openToCounts: row.open_to_counts || [],
+      role: row.role || "",
+      photo: row.photo_url || null,
+      bio: row.bio || "",
+    };
+  }
+
+  // Fire-and-forget background load, cached per signed-in user so it only
+  // runs once per session. viewHome() calls this every render, but the
+  // realMatchesLoadedFor guard means only the first call after sign-in
+  // actually hits the network — once the fetch resolves it re-renders.
+  function ensureRealMatchesLoaded(userId) {
+    if (!nestfulDB || realMatchesLoadedFor === userId) return;
+    realMatchesLoadedFor = userId;
+    nestfulDB.browseProfiles()
+      .then(function (rows) {
+        realMatches = rows.filter(isOnboardedRow).map(dbRowToMatch);
+        viewHome();
+      })
+      .catch(function (err) {
+        console.error("Couldn't load real matches:", err);
+        realMatchesLoadedFor = null; // allow a retry on the next render
+      });
+  }
+
   function visibleMatches(user) {
     const p = user.profile;
-    return SAMPLES.filter(function (s) {
+    const pool = SAMPLES.concat(realMatches.filter(function (r) { return r._id !== user.id; }));
+    return pool.filter(function (s) {
       return mutuallyOpen(p, s) && genderCompatible(p, s) &&
         countsAcceptable(p, s) && countsAcceptable(s, p);
     });
+  }
+
+  /* ----- Notifications: real likes/notes received (see supabase-client.js
+     whoLikedMeSinceLastSeen/markNotificationsSeen) — a bell in the home
+     header shakes and hatches from 🪺 into 💌 the moment there's something
+     unread, so it's the first thing a member sees on login. ----- */
+
+  let notifState = { likes: [], unread: [], lastSeen: null };
+  let notifLoadedFor = null; // authUser.id this cache belongs to
+  let notifAnimatedCount = null; // unread count already played the hatch animation for
+  let notifPanelOpen = false;
+
+  function ensureNotificationsLoaded(userId) {
+    if (!nestfulDB || notifLoadedFor === userId) return;
+    notifLoadedFor = userId;
+    nestfulDB.whoLikedMeSinceLastSeen()
+      .then(function (result) {
+        notifState = result;
+        // So a click from the notification panel can always open the
+        // sender's profile, even if mutual pre-screening/filters would
+        // otherwise have kept them out of realMatches.
+        result.likes.forEach(function (l) {
+          if (l.profiles && !realMatches.some(function (r) { return r._id === l.liker_id; })) {
+            realMatches.push(dbRowToMatch(Object.assign({ id: l.liker_id }, l.profiles)));
+          }
+        });
+        viewHome();
+      })
+      .catch(function (err) {
+        console.error("Couldn't load notifications:", err);
+        notifLoadedFor = null; // allow a retry on the next render
+      });
+  }
+
+  function toggleNotifPanel() {
+    notifPanelOpen = !notifPanelOpen;
+    if (notifPanelOpen && notifState.unread.length) {
+      nestfulDB.markNotificationsSeen().catch(function (err) {
+        console.error("Couldn't mark notifications seen:", err);
+      });
+      notifState = { likes: notifState.likes, unread: [], lastSeen: new Date().toISOString() };
+    }
+    viewHome();
+  }
+
+  function notifBellHTML() {
+    const count = notifState.unread.length;
+    const isNew = count > 0 && notifAnimatedCount !== count;
+    const icon = count > 0 ? "💌" : "🪺";
+    const html =
+      '<button type="button" class="notif-bell' + (count > 0 ? " has-unread" : "") +
+        '" id="notif-bell" title="Likes & notes">' +
+        '<span class="notif-egg' + (isNew ? " hatching" : "") + '">' + icon + "</span>" +
+        (count > 0 ? '<span class="notif-badge">' + (count > 9 ? "9+" : count) + "</span>" : "") +
+      "</button>";
+    notifAnimatedCount = count;
+    return html;
+  }
+
+  function notifPanelHTML() {
+    if (!notifPanelOpen) return "";
+    if (!notifState.likes.length) {
+      return (
+        '<div class="notif-panel">' +
+          '<p class="detail-bio">No likes or notes yet — once someone likes your nest, ' +
+          "they’ll show up here.</p>" +
+        "</div>"
+      );
+    }
+    return (
+      '<div class="notif-panel">' +
+        notifState.likes.map(function (l) {
+          const sender = dbRowToMatch(Object.assign({ id: l.liker_id }, l.profiles || {}));
+          const hasNote = l.note && l.note.trim();
+          return (
+            '<div class="notif-row" data-key="' + esc(matchKey(sender)) + '">' +
+              avatarHTML(sender.name || "?", sender.photo, sender.hue, "avatar-sm") +
+              '<span class="notif-row-text"><strong>' + esc(sender.name || "Someone") + "</strong>" +
+                (hasNote
+                  ? '<span class="notif-row-note">“' + esc(l.note) + '”</span>'
+                  : '<span class="notif-row-note">Liked your nest</span>') +
+              "</span>" +
+            "</div>"
+          );
+        }).join("") +
+      "</div>"
+    );
   }
 
   function contentLabel(s, k) {
@@ -1437,8 +1635,8 @@
         '<span class="likedyou-row">' +
           likers.map(function (s) {
             return (
-              '<span class="likedyou-chip" data-name="' + esc(s.name) + '">' +
-                avatarHTML(s.name, null, s.hue, "avatar-sm") + esc(s.name) +
+              '<span class="likedyou-chip" data-key="' + esc(matchKey(s)) + '">' +
+                avatarHTML(s.name, s.photo, s.hue, "avatar-sm") + esc(s.name) +
               "</span>"
             );
           }).join("") +
@@ -1594,6 +1792,8 @@
   function viewHome() {
     const user = currentUser();
     if (!user || !user.profile) return viewLanding();
+    ensureRealMatchesLoaded(user.id);
+    ensureNotificationsLoaded(user.id);
     const p = user.profile;
     const kind = badgeKind(p);
     const mode = store.getViewMode();
@@ -1622,9 +1822,9 @@
         const sKind = s.contents.length ? "full" : "ready";
         deck =
           '<div class="stack-counter">' + (stackIndex + 1) + " of " + filtered.length + "</div>" +
-          '<div class="stack-card" id="stack-card" data-name="' + esc(s.name) + '">' +
-            avatarHTML(s.name, null, s.hue, "avatar-lg") +
-            '<span class="match-name">' + esc(s.name) + ", " + s.age + "</span>" +
+          '<div class="stack-card" id="stack-card" data-key="' + esc(matchKey(s)) + '">' +
+            avatarHTML(s.name, s.photo, s.hue, "avatar-lg") +
+            '<span class="match-name">' + esc(s.name) + ageSuffix(s) + "</span>" +
             '<span class="match-city">' + esc(s.city) +
               (s.pronouns ? " · " + esc(s.pronouns) : "") + " · " + badgeChip(sKind) + "</span>" +
             '<p class="match-bio">' + esc(s.bio) + "</p>" +
@@ -1642,10 +1842,10 @@
         filtered.map(function (s, i) {
           const sKind = s.contents.length ? "full" : "ready";
           return (
-            '<div class="match-card" data-name="' + esc(s.name) + '" style="animation-delay:' + i * 0.05 + 's">' +
+            '<div class="match-card" data-key="' + esc(matchKey(s)) + '" style="animation-delay:' + i * 0.05 + 's">' +
               '<div class="match-top">' +
-                avatarHTML(s.name, null, s.hue, "avatar-sm") +
-                '<span class="match-id"><span class="match-name">' + esc(s.name) + ", " + s.age + "</span>" +
+                avatarHTML(s.name, s.photo, s.hue, "avatar-sm") +
+                '<span class="match-id"><span class="match-name">' + esc(s.name) + ageSuffix(s) + "</span>" +
                 '<span class="match-city">' + esc(s.city) +
                   (s.pronouns ? " · " + esc(s.pronouns) : "") + "</span></span>" +
                 badgeChip(sKind) +
@@ -1672,11 +1872,13 @@
             "</span>" +
           "</span>" +
         "</div>" +
-        '<span style="display:flex;gap:2px">' +
+        '<span style="display:flex;gap:2px;align-items:center">' +
+          notifBellHTML() +
           '<button class="btn btn-ghost" id="edit-profile-btn">✎ Edit</button>' +
           '<button class="btn btn-ghost" id="sign-out">Sign out</button>' +
         "</span>" +
       "</div>" +
+      notifPanelHTML() +
       '<div class="view-toggle">' +
         '<button id="mode-list" class="' + (mode === "list" ? "active" : "") + '">☰ List</button>' +
         '<button id="mode-stack" class="' + (mode === "stack" ? "active" : "") + '">🃏 Stack</button>' +
@@ -1705,6 +1907,12 @@
       authProfile = null;
       stackIndex = 0;
       editMode = false;
+      realMatches = [];
+      realMatchesLoadedFor = null;
+      notifState = { likes: [], unread: [], lastSeen: null };
+      notifLoadedFor = null;
+      notifAnimatedCount = null;
+      notifPanelOpen = false;
       viewLanding();
     };
     function startEdit() {
@@ -1732,7 +1940,16 @@
     const $teaser = document.getElementById("teaser");
     if ($teaser) $teaser.onclick = function () { viewUpgrade("liked"); };
     $app.querySelectorAll(".likedyou-chip").forEach(function (chip) {
-      chip.onclick = function () { viewDetail(chip.getAttribute("data-name")); };
+      chip.onclick = function () { viewDetail(chip.getAttribute("data-key")); };
+    });
+
+    const $bell = document.getElementById("notif-bell");
+    if ($bell) $bell.onclick = toggleNotifPanel;
+    $app.querySelectorAll(".notif-row").forEach(function (row) {
+      row.onclick = function () {
+        notifPanelOpen = false;
+        viewDetail(row.getAttribute("data-key"));
+      };
     });
 
     wireFilterBar(filters);
@@ -1743,8 +1960,9 @@
 
   function wireListCards() {
     $app.querySelectorAll(".match-card").forEach(function (card) {
-      const name = card.getAttribute("data-name");
-      card.addEventListener("click", function () { viewDetail(name); });
+      const key = card.getAttribute("data-key");
+      const match = findMatchByKey(key);
+      card.addEventListener("click", function () { viewDetail(key); });
 
       const like = card.querySelector("[data-like]");
       const pass = card.querySelector("[data-pass]");
@@ -1757,8 +1975,8 @@
       like.onclick = function (e) {
         e.stopPropagation();
         if (!canLikeNow(currentUser())) return viewUpgrade("likes");
-        recordLike(name, "");
-        toast("Liked " + name + " ❤");
+        recordLike(match, "");
+        toast("Liked " + match.name + " ❤");
         dismiss("like");
       };
       pass.onclick = function (e) {
@@ -1771,9 +1989,10 @@
   function wireStackCard(visible) {
     const card = document.getElementById("stack-card");
     if (!card) return;
-    const name = card.getAttribute("data-name");
+    const key = card.getAttribute("data-key");
+    const match = findMatchByKey(key);
 
-    card.addEventListener("click", function () { viewDetail(name); });
+    card.addEventListener("click", function () { viewDetail(key); });
 
     function advance(cls) {
       card.classList.add(cls);
@@ -1789,13 +2008,13 @@
     document.getElementById("stack-like").onclick = function (e) {
       e.stopPropagation();
       if (!canLikeNow(currentUser())) return viewUpgrade("likes");
-      recordLike(name, "");
-      toast("Liked " + name + " ❤");
+      recordLike(match, "");
+      toast("Liked " + match.name + " ❤");
       advance("exit-right");
     };
     document.getElementById("stack-note").onclick = function (e) {
       e.stopPropagation();
-      viewDetail(name, true);
+      viewDetail(key, true);
     };
   }
 
@@ -1918,8 +2137,8 @@
 
   /* ----- Full profile detail view ----- */
 
-  function viewDetail(name, openNote) {
-    const s = SAMPLES.find(function (x) { return x.name === name; });
+  function viewDetail(key, openNote) {
+    const s = findMatchByKey(key);
     if (!s) return viewHome();
     const sKind = s.contents.length ? "full" : "ready";
 
@@ -1931,8 +2150,8 @@
     render(
       '<button class="btn btn-ghost" id="dt-back" style="width:auto;padding-left:0">← Back to matches</button>' +
       '<div class="detail-head">' +
-        avatarHTML(s.name, null, s.hue, "avatar-lg") +
-        '<div class="detail-name">' + esc(s.name) + ", " + s.age + "</div>" +
+        avatarHTML(s.name, s.photo, s.hue, "avatar-lg") +
+        '<div class="detail-name">' + esc(s.name) + ageSuffix(s) + "</div>" +
         '<div class="detail-city">' +
           (s.gender ? esc(genderLabel(s.gender)) : "") +
           (s.genderDetail ? " (" + esc(s.genderDetail) + ")" : "") +
@@ -1965,7 +2184,7 @@
     };
     document.getElementById("dt-like").onclick = function () {
       if (!canLikeNow(currentUser())) return viewUpgrade("likes");
-      recordLike(s.name, "");
+      recordLike(s, "");
       toast("Liked " + s.name + " ❤");
       viewHome();
     };
@@ -2012,7 +2231,7 @@
         }
         if (notesLeft(currentUser()) === 0) return showNotePanel();
         if (!canLikeNow(currentUser())) return viewUpgrade("likes");
-        recordLike(s.name, note);
+        recordLike(s, note);
         toast("Note sent to " + s.name + " ❤");
         viewHome();
       };
