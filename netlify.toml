@@ -1,3 +1,7 @@
 [build]
   publish = "app"
   functions = "netlify/functions"
+  # Skip the deploy (and its 15-credit cost) unless something that
+  # actually affects the running site changed. Business docs, the
+  # legal drafts, business-plan.md, etc. no longer burn a deploy.
+  ignore = "git diff --quiet HEAD^ HEAD -- app/ netlify/ netlify.toml"
