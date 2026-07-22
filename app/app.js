@@ -2011,7 +2011,7 @@
         viewHome();
       })
       .catch(function (err) {
-        console.error("Couldn't load notifications:", err);
+        console.error("Couldn't load notifications:", err && (err.message || err.code || err));
         notifLoadedFor = null; // allow a retry on the next render
       });
   }
