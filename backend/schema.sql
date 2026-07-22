@@ -49,6 +49,13 @@ create table if not exists public.profiles (
   -- as unread.
   last_notifications_seen_at timestamptz default now(),
 
+  -- Hidden founder/admin ghost-viewer mode (see app.js viewAdmin /
+  -- admin-stats Edge Function). Never settable by the row's own owner
+  -- via the client SDK — see protect_is_admin trigger below. Only
+  -- flip this by hand in the SQL Editor (runs as a superuser, not
+  -- through PostgREST/RLS) or from a service-role Edge Function.
+  is_admin          boolean not null default false,
+
   created_at        timestamptz default now()
 );
 
@@ -57,6 +64,8 @@ create table if not exists public.profiles (
 -- update to an existing Supabase project rather than a fresh one).
 alter table public.profiles
   add column if not exists last_notifications_seen_at timestamptz default now();
+alter table public.profiles
+  add column if not exists is_admin boolean not null default false;
 
 alter table public.profiles enable row level security;
 
@@ -78,6 +87,30 @@ create policy "members can update their own profile"
 create policy "members can delete their own profile"
   on public.profiles for delete
   using (auth.uid() = id);
+
+-- The update policy above only checks row ownership, not which columns
+-- change — without this trigger, any signed-in member could self-promote
+-- via a direct client SDK call (e.g. `.update({is_admin: true})`), since
+-- they're allowed to update their own row and RLS has no per-column
+-- granularity. auth.role() is NULL outside a PostgREST/RLS request (e.g.
+-- the SQL Editor, or a service-role Edge Function), so coalescing it to
+-- 'service_role' lets those contexts flip the flag while every real
+-- client-side update gets silently reset back to its prior value.
+create or replace function public.protect_is_admin()
+returns trigger as $$
+begin
+  if new.is_admin is distinct from old.is_admin
+     and coalesce(auth.role(), 'service_role') <> 'service_role' then
+    new.is_admin := old.is_admin;
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists protect_is_admin_trigger on public.profiles;
+create trigger protect_is_admin_trigger
+  before update on public.profiles
+  for each row execute function public.protect_is_admin();
 
 
 -- ---------- likes ----------

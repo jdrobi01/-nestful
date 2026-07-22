@@ -105,7 +105,11 @@ const nestfulDB = (function () {
     const { data, error } = await client
       .from("profiles")
       .select("*")
-      .neq("id", user.id);
+      .neq("id", user.id)
+      // Hides the founder/admin ghost-viewer account from every real
+      // member's deck. Harmless if the caller IS the admin — they've
+      // already excluded their own row via .neq above.
+      .eq("is_admin", false);
     if (error) throw error;
     // Mutual-openness / gender / kid-count filtering (mutuallyOpen(),
     // genderCompatible(), countsAcceptable() in app.js) still runs
@@ -182,6 +186,17 @@ const nestfulDB = (function () {
     await upsertMyProfile({ plus_waitlist: true, plus_waitlist_at: new Date().toISOString() });
   }
 
+  /* ---------- Hidden founder/admin dashboard (app.js viewAdmin) ----------
+     Calls the admin-stats Edge Function, which re-checks profiles.is_admin
+     itself server-side before returning anything — being signed in here is
+     not enough on its own, this call will 403 for a non-admin caller even
+     if they somehow reach the UI that triggers it. */
+  async function getAdminStats() {
+    const { data, error } = await client.functions.invoke("admin-stats");
+    if (error) throw error;
+    return data;
+  }
+
   return {
     client, // escape hatch for anything not wrapped above
     signUp, signIn, signOut, currentSession,
@@ -191,5 +206,6 @@ const nestfulDB = (function () {
     sendLike, whoLikedMe, usageCountSince,
     whoLikedMeSinceLastSeen, markNotificationsSeen,
     joinWaitlist,
+    getAdminStats,
   };
 })();
