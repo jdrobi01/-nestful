@@ -870,7 +870,12 @@
       ribbon = document.createElement("div");
       ribbon.id = "admin-ribbon";
       ribbon.className = "env-ribbon admin-ribbon";
-      ribbon.textContent = "👁 Admin mode — invisible to members, actions never reach real users";
+      ribbon.textContent = "👁 Admin mode — invisible to members, actions are simulated only · tap for dashboard 📊";
+      ribbon.title = "Open the founder dashboard";
+      // The ribbon itself IS the admin entry point — always on screen on
+      // every view (it lives outside #app, see render()), one tap away,
+      // and only ever created in the first place when isAdmin is true.
+      ribbon.onclick = function () { location.hash = "#admin"; };
       document.body.prepend(ribbon);
     } else if (!show && ribbon) {
       ribbon.remove();
@@ -958,6 +963,20 @@
     document.body.appendChild(el);
     setTimeout(function () { el.classList.add("gone"); }, 1800);
     setTimeout(function () { el.remove(); }, 2200);
+  }
+
+  // Admin mode never writes a real like/note (see recordLike) — these make
+  // that unmistakable in the UI itself, not just true under the hood, so
+  // it's never ambiguous whether an action reached a real member.
+  function likeToastText(name) {
+    return currentUser().isAdmin
+      ? "👁 Simulated — " + name + " was not actually notified"
+      : "Liked " + name + " ❤";
+  }
+  function noteToastText(name) {
+    return currentUser().isAdmin
+      ? "👁 Simulated — no note actually sent to " + name
+      : "Note sent to " + name + " ❤";
   }
 
   function checkPills(name, items, checkedKeys) {
@@ -2481,7 +2500,7 @@
         e.stopPropagation();
         if (!canLikeNow(currentUser())) return viewUpgrade("likes");
         recordLike(match, "");
-        toast("Liked " + match.name + " ❤");
+        toast(likeToastText(match.name));
         dismiss("like");
       };
       pass.onclick = function (e) {
@@ -2514,7 +2533,7 @@
       e.stopPropagation();
       if (!canLikeNow(currentUser())) return viewUpgrade("likes");
       recordLike(match, "");
-      toast("Liked " + match.name + " ❤");
+      toast(likeToastText(match.name));
       advance("exit-right");
     };
     document.getElementById("stack-note").onclick = function (e) {
@@ -2690,7 +2709,7 @@
     document.getElementById("dt-like").onclick = function () {
       if (!canLikeNow(currentUser())) return viewUpgrade("likes");
       recordLike(s, "");
-      toast("Liked " + s.name + " ❤");
+      toast(likeToastText(s.name));
       viewHome();
     };
 
@@ -2737,7 +2756,7 @@
         if (notesLeft(currentUser()) === 0) return showNotePanel();
         if (!canLikeNow(currentUser())) return viewUpgrade("likes");
         recordLike(s, note);
-        toast("Note sent to " + s.name + " ❤");
+        toast(noteToastText(s.name));
         viewHome();
       };
     }

@@ -691,7 +691,9 @@ label.field input:focus, label.field textarea:focus, label.field select:focus {
 .admin-ribbon {
   background: var(--ink);
   color: #fff;
+  cursor: pointer;
 }
+.admin-ribbon:hover { opacity: 0.9; }
 
 /* ---------- Founder dashboard: stat grid ---------- */
 .admin-stat-grid {
