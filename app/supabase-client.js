@@ -147,6 +147,35 @@ const nestfulDB = (function () {
     return count;
   }
 
+  /* ---------- Notifications (powers app.js notification bell) ---------- */
+
+  // Likes/notes received since the profile's last_notifications_seen_at —
+  // the same whoLikedMe() rows, just also telling the caller which ones
+  // are new so the bell badge/hatch animation knows what to count.
+  async function whoLikedMeSinceLastSeen() {
+    const { data: { user } } = await client.auth.getUser();
+    const { data: profile, error: profileError } = await client
+      .from("profiles")
+      .select("last_notifications_seen_at")
+      .eq("id", user.id)
+      .single();
+    if (profileError) throw profileError;
+
+    const lastSeen = profile?.last_notifications_seen_at || new Date(0).toISOString();
+    const likes = await whoLikedMe();
+    const unread = likes.filter((l) => l.created_at > lastSeen);
+    return { likes, unread, lastSeen };
+  }
+
+  async function markNotificationsSeen() {
+    const { data: { user } } = await client.auth.getUser();
+    const { error } = await client
+      .from("profiles")
+      .update({ last_notifications_seen_at: new Date().toISOString() })
+      .eq("id", user.id);
+    if (error) throw error;
+  }
+
   /* ---------- Nestful+ waitlist (replaces app.js: viewComingSoon's cs-waitlist button) ---------- */
 
   async function joinWaitlist() {
@@ -160,6 +189,7 @@ const nestfulDB = (function () {
     getMyProfile, upsertMyProfile, deleteMyAccount,
     browseProfiles,
     sendLike, whoLikedMe, usageCountSince,
+    whoLikedMeSinceLastSeen, markNotificationsSeen,
     joinWaitlist,
   };
 })();

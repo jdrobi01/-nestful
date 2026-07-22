@@ -44,8 +44,19 @@ create table if not exists public.profiles (
   plus_waitlist     boolean default false,
   plus_waitlist_at  timestamptz,
 
+  -- Notifications (see app.js notification bell): last time this
+  -- member opened their notification panel — anything newer counts
+  -- as unread.
+  last_notifications_seen_at timestamptz default now(),
+
   created_at        timestamptz default now()
 );
+
+-- Safe to re-run on a project that already has the table (adds the
+-- column only if it's missing — needed when applying this schema
+-- update to an existing Supabase project rather than a fresh one).
+alter table public.profiles
+  add column if not exists last_notifications_seen_at timestamptz default now();
 
 alter table public.profiles enable row level security;
 
@@ -94,6 +105,10 @@ create policy "members can send likes as themselves"
 create policy "members can delete likes they sent"
   on public.likes for delete
   using (auth.uid() = liker_id);
+
+-- Speeds up "how many unread likes do I have" on every login.
+create index if not exists likes_likee_created_idx
+  on public.likes (likee_id, created_at desc);
 
 
 -- ---------- usage_events ----------

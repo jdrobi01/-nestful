@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nestful-staging",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "app", "-l", "4517"],
+      "port": 4517
+    }
+  ]
+}
