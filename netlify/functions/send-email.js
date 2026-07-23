@@ -57,6 +57,18 @@ async function logEmailEvent(type) {
   }
 }
 
+// The button/CTA destination in the email HTML — must point at whichever
+// site actually triggered the send (staging vs production), not always
+// production, since these get embedded as a real clickable link in a
+// real email. Reuses the same allowlist as the origin check above rather
+// than trusting the caller's value outright — this becomes a link inside
+// an outbound email, so an unvalidated value here would be an open
+// redirect/phishing vector.
+function safeAppUrl(candidate) {
+  if (candidate && isAllowedOrigin(candidate)) return candidate;
+  return "https://nestfulapp.com";
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -94,7 +106,7 @@ function button(label, href) {
   );
 }
 
-function templates(rawName, rawSenderName, rawNote) {
+function templates(rawName, rawSenderName, rawNote, appUrl) {
   const name = esc(rawName || "there");
   const senderName = esc(rawSenderName || "Someone");
   const note = rawNote ? esc(rawNote) : "";
@@ -113,7 +125,7 @@ function templates(rawName, rawSenderName, rawNote) {
           "share your openness. No reveals. No surprises. Just people who already " +
           "said yes." +
         "</p>" +
-        button("Finish my profile", "https://nestfulapp.com")
+        button("Finish my profile", appUrl)
       ),
     },
 
@@ -128,7 +140,7 @@ function templates(rawName, rawSenderName, rawNote) {
           "If that wasn't you, reset your password right away from the sign-in " +
           "screen — no other account access is possible without it." +
         "</p>" +
-        button("Go to Nestful", "https://nestfulapp.com")
+        button("Go to Nestful", appUrl)
       ),
     },
 
@@ -146,7 +158,7 @@ function templates(rawName, rawSenderName, rawNote) {
           "filters, Rhythm Match, and seeing who liked you are all included, no " +
           "waiting required." +
         "</p>" +
-        button("Back to my nest", "https://nestfulapp.com")
+        button("Back to my nest", appUrl)
       ),
     },
 
@@ -162,7 +174,7 @@ function templates(rawName, rawSenderName, rawNote) {
         '<p style="font-size:15px;line-height:1.65;margin:0">' +
           "See who it is and like them back to open the conversation." +
         "</p>" +
-        button("See who liked me", "https://nestfulapp.com")
+        button("See who liked me", appUrl)
       ),
     },
 
@@ -182,7 +194,7 @@ function templates(rawName, rawSenderName, rawNote) {
         '<p style="font-size:15px;line-height:1.65;margin:0">' +
           "Like them back to start the conversation." +
         "</p>" +
-        button("See my notes", "https://nestfulapp.com")
+        button("See my notes", appUrl)
       ),
     },
 
@@ -228,7 +240,7 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: "Invalid JSON" };
   }
 
-  const { type, name, email, senderName, note } = payload;
+  const { type, name, email, senderName, note, appUrl } = payload;
   if (!email || typeof email !== "string" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return { statusCode: 400, body: "Invalid email" };
   }
@@ -242,7 +254,12 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: "Invalid note" };
   }
 
-  const template = templates(name, senderName, note)[type];
+  // Falls back to the request's own (already-validated) origin if the
+  // caller didn't pass an explicit appUrl, so this stays correct even
+  // for any future caller that forgets to send one.
+  const resolvedAppUrl = safeAppUrl(appUrl || origin);
+
+  const template = templates(name, senderName, note, resolvedAppUrl)[type];
   if (!template) {
     return { statusCode: 400, body: "Unknown template type: " + type };
   }

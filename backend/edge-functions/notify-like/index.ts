@@ -66,6 +66,12 @@ Deno.serve(async (req: Request) => {
 
     const hasNote = typeof record.note === "string" && record.note.trim().length > 0;
 
+    // SEND_EMAIL_ENDPOINT is already set per-environment (staging's own
+    // Netlify URL vs production's), so its own origin is exactly the
+    // right link for the email's CTA button — this used to be hardcoded
+    // to production, which sent staging-triggered emails to the wrong site.
+    const appUrl = new URL(sendEmailEndpoint).origin;
+
     const emailRes = await fetch(sendEmailEndpoint, {
       method: "POST",
       headers: {
@@ -80,6 +86,7 @@ Deno.serve(async (req: Request) => {
         email: recipientAuth.user.email,
         senderName: senderProfile?.name || "Someone",
         note: hasNote ? record.note : undefined,
+        appUrl: appUrl,
       }),
     });
 
