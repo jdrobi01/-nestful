@@ -3,9 +3,12 @@
    ------------------------------------------------------------
    Returns aggregate, non-identifying counts for the hidden founder
    dashboard (app.js viewAdmin): total real members, Full Nest vs
-   Nest-Ready split, likes/notes sent. Needs the service_role key
-   because `likes` RLS only lets a member read likes they sent or
-   received themselves — an admin-wide count has to happen server-side.
+   Nest-Ready split, likes/notes sent, and a 14-day email-activity
+   breakdown (type + count only, from email_events — never a recipient
+   or subject). Needs the service_role key because `likes` RLS only lets
+   a member read likes they sent or received themselves, and
+   `email_events` has zero client-facing policies at all — both an
+   admin-wide read has to happen server-side.
 
    Security model: the caller is identified from their OWN verified
    JWT (never trusted from the request), then their own profiles.is_admin
@@ -76,17 +79,40 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const [{ data: profiles, error: profilesError }, { data: likes, error: likesError }] = await Promise.all([
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [
+      { data: profiles, error: profilesError },
+      { data: likes, error: likesError },
+      { data: emailEvents, error: emailEventsError },
+    ] = await Promise.all([
       adminClient.from("profiles").select("contents").eq("is_admin", false),
       adminClient.from("likes").select("note"),
+      adminClient.from("email_events").select("type, created_at").gte("created_at", fourteenDaysAgo),
     ]);
     if (profilesError) throw profilesError;
     if (likesError) throw likesError;
+    if (emailEventsError) throw emailEventsError;
 
     const totalMembers = profiles?.length || 0;
     const fullNest = (profiles || []).filter((p) => p.contents && p.contents.length > 0).length;
     const totalLikes = likes?.length || 0;
     const totalNotes = (likes || []).filter((l) => l.note && l.note.trim().length > 0).length;
+
+    // Email activity, last 14 days — type + timestamp only, never a recipient.
+    const emailTotalsByType: Record<string, number> = {};
+    const emailByDay: Record<string, number> = {};
+    (emailEvents || []).forEach((e) => {
+      emailTotalsByType[e.type] = (emailTotalsByType[e.type] || 0) + 1;
+      const day = String(e.created_at).slice(0, 10); // YYYY-MM-DD
+      emailByDay[day] = (emailByDay[day] || 0) + 1;
+    });
+    // Fill every day in the window (including zeros) so the trend line has no gaps.
+    const emailDailySeries: { date: string; count: number }[] = [];
+    for (let i = 13; i >= 0; i--) {
+      const key = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      emailDailySeries.push({ date: key, count: emailByDay[key] || 0 });
+    }
 
     return new Response(JSON.stringify({
       totalMembers,
@@ -94,6 +120,8 @@ Deno.serve(async (req: Request) => {
       nestReady: totalMembers - fullNest,
       totalLikes,
       totalNotes,
+      emailTotalsByType,
+      emailDailySeries,
     }), {
       status: 200,
       headers: { ...cors, "Content-Type": "application/json" },
