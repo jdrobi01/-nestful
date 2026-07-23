@@ -186,7 +186,9 @@
     fetch("/.netlify/functions/send-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: type, name: name, email: email }),
+      // appUrl: so the email's CTA button links back to whichever site
+      // actually sent it (staging vs production), not always production.
+      body: JSON.stringify({ type: type, name: name, email: email, appUrl: location.origin }),
     }).catch(function () { /* best-effort — see comment above */ });
   }
 
