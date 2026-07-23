@@ -35,6 +35,28 @@ function isAllowedOrigin(origin) {
   }
 }
 
+// Best-effort activity log for the hidden admin dashboard — type + timestamp
+// only, never the recipient. Failures here must never fail the actual email
+// send, so this is fire-and-forget with its own try/catch.
+async function logEmailEvent(type) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return; // not configured on this site — silently skip
+  try {
+    await fetch(url + "/rest/v1/email_events", {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: "Bearer " + key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ type: type }),
+    });
+  } catch {
+    // Non-fatal — the email itself already sent successfully.
+  }
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -246,6 +268,7 @@ exports.handler = async function (event) {
       return { statusCode: 502, body: "Brevo error: " + errText };
     }
 
+    await logEmailEvent(type);
     return { statusCode: 200, body: JSON.stringify({ ok: true }) };
   } catch (err) {
     return { statusCode: 500, body: "Send failed: " + err.message };

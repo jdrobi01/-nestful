@@ -26,7 +26,6 @@
   const PREFIX = BRAND.storagePrefix + (ENV === "staging" ? "-staging" : "");
   const KEY_VIEWMODE = PREFIX + ".viewmode";
   const KEY_FILTERS = PREFIX + ".filters";
-  const KEY_EMAILS = PREFIX + ".emails";
   const KEY_DEMO = PREFIX + ".demo"; // per-user demo-deck likes/usage — see recordLike() below
 
   const store = {
@@ -54,15 +53,6 @@
       catch { return empty; }
     },
     setFilters(f) { localStorage.setItem(KEY_FILTERS, JSON.stringify(f)); },
-    getEmails() {
-      try { return JSON.parse(localStorage.getItem(KEY_EMAILS)) || []; }
-      catch { return []; }
-    },
-    addEmail(email) {
-      const list = store.getEmails();
-      list.unshift(Object.assign({ id: "e_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), sentAt: new Date().toISOString() }, email));
-      localStorage.setItem(KEY_EMAILS, JSON.stringify(list.slice(0, 200)));
-    },
   };
 
   /* ---------------- Auth state (backed by Supabase) ----------------
@@ -171,72 +161,35 @@
     return currentUser();
   }
 
-  /* ---------------- Email (local activity log) ----------------
-     Password reset/change now really happens through Supabase (and,
-     once backend/SETUP.md Phase 2 is done, through your verified
-     nestfulapp.com sender). This log is just a founder-visible record
-     of that activity (#admin → Outbox) — not a delivery mechanism. */
-  function sendEmail(to, subject, body) {
-    store.addEmail({ to: to, subject: subject, body: body });
-  }
-
-  /* Fire-and-forget call to the real sender (netlify/functions/send-email.js).
-     Never blocks the UI and never surfaces a failure to the end user — the
-     local Outbox log above is the fallback record if this silently fails
-     (e.g. BREVO_API_KEY not yet configured on this Netlify site). */
+  /* ---------------- Email ----------------
+     Fire-and-forget call to the real sender (netlify/functions/send-email.js),
+     which calls Brevo for real and logs a type+timestamp-only event (no
+     recipient) to email_events for the admin dashboard's activity chart.
+     Never blocks the UI and never surfaces a failure to the end user — if
+     this silently fails (e.g. BREVO_API_KEY not yet configured on this
+     Netlify site), the email just doesn't send; nothing else depends on it. */
   function sendRealEmail(type, name, email) {
     if (!email) return;
     fetch("/.netlify/functions/send-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: type, name: name, email: email }),
-    }).catch(function () { /* local Outbox log is the fallback record */ });
+    }).catch(function () { /* best-effort — see comment above */ });
   }
 
   function sendWelcomeEmail(account) {
-    sendEmail(
-      account.email,
-      "Welcome to " + BRAND.name + " 🪺",
-      "Hi " + account.name + ",\n\n" +
-      "Welcome to " + BRAND.name + " — " + BRAND.tagline + "\n\n" +
-      "You're in. Finish your Nest Profile to start seeing pre-screened matches " +
-      "who already share your openness to kids and dependents.\n\n" +
-      "— The " + BRAND.name + " team"
-    );
     sendRealEmail("welcome", account.name, account.email);
   }
 
   function sendPasswordChangedEmail(account) {
-    sendEmail(
-      account.email,
-      "Your " + BRAND.name + " password was changed",
-      "Hi " + account.name + ",\n\n" +
-      "This confirms your " + BRAND.name + " password was just changed. " +
-      "If that wasn't you, reset your password right away from the sign-in screen."
-    );
     sendRealEmail("password_changed", account.name, account.email);
   }
 
   function sendWaitlistEmail(account) {
-    sendEmail(
-      account.email,
-      "You're on the " + BRAND.name + "+ list ✨",
-      "Hi " + account.name + ",\n\n" +
-      BRAND.name + "+ is coming — unlimited likes, Private Nest mode, a weekly " +
-      "Boost, and more. You'll be first to know when it opens.\n\n" +
-      "— The " + BRAND.name + " team"
-    );
     sendRealEmail("waitlist", account.name, account.email);
   }
 
   function sendAccountDeletedEmail(account) {
-    sendEmail(
-      account.email,
-      "Your " + BRAND.name + " account has been deleted",
-      "Hi " + account.name + ",\n\n" +
-      "This confirms your profile, photo, and Nest Profile answers have been " +
-      "permanently deleted, along with every like and note you sent."
-    );
     sendRealEmail("account_deleted", account.name, account.email);
   }
 
@@ -2285,15 +2238,14 @@
     if (openNote) showNotePanel();
   }
 
-  /* ----- Founder dashboard: hidden admin stats + email log (#admin) -----
+  /* ----- Founder dashboard: hidden admin stats (#admin) -----
      Gated by currentUser().isAdmin (see boot() — this is only reachable
      after refreshAuthState() resolves). Anyone else hitting #admin,
      signed in or not, gets silently redirected — no hint that a founder
-     view even exists. Real per-member data still isn't listable here
-     (auth.users stays protected, by design); this is aggregate counts
-     only, via the admin-stats Edge Function. */
+     view even exists. Everything shown here is an aggregate count or a
+     type+timestamp-only tally — no member's real data (name, email,
+     message content) is ever displayed, by design. */
 
-  let adminTab = "stats";
   let adminStats = null;
   let adminStatsLoadedFor = null; // authUser.id this cache belongs to
 
@@ -2317,7 +2269,6 @@
       history.replaceState(null, "", location.pathname + location.search);
       return user ? viewHome() : viewLanding();
     }
-    if (adminTab === "outbox") return viewAdminOutbox();
 
     ensureAdminStatsLoaded(user.id);
 
@@ -2325,7 +2276,6 @@
       brandRow() +
       '<h2 class="view-title">Founder dashboard</h2>' +
       '<p class="view-sub">Environment: <strong>' + ENV + "</strong> · signed in as " + esc(user.name) + "</p>" +
-      adminTabsHTML() +
       adminStatsHTML() +
       '<button class="btn btn-ghost" id="adm-back">← Back to the app</button>'
     );
@@ -2339,6 +2289,70 @@
         '<span class="admin-stat-icon">' + icon + "</span>" +
         '<span class="admin-stat-num">' + value + "</span>" +
         '<span class="admin-stat-label">' + esc(label) + "</span>" +
+      "</div>"
+    );
+  }
+
+  const EMAIL_TYPE_LABELS = {
+    welcome: "Welcome",
+    password_changed: "Password changed",
+    waitlist: "Waitlist join",
+    account_deleted: "Account deleted",
+    new_like: "New like",
+    new_message: "New message",
+  };
+  function emailTypeLabel(type) {
+    return EMAIL_TYPE_LABELS[type] || type;
+  }
+
+  // Deliberately a plain CSS bar chart, no charting library — type + count
+  // only, matching email_events itself (never a recipient or subject).
+  function emailBarChartHTML(totalsByType) {
+    const entries = Object.keys(totalsByType || {}).map(function (t) {
+      return { type: t, count: totalsByType[t] };
+    }).sort(function (a, b) { return b.count - a.count; });
+    if (!entries.length) {
+      return '<div class="empty-deck">No emails sent in the last 14 days.</div>';
+    }
+    const max = Math.max.apply(null, entries.map(function (e) { return e.count; }));
+    return (
+      '<div class="admin-bar-chart">' +
+        entries.map(function (e) {
+          const pct = max ? Math.round((e.count / max) * 100) : 0;
+          return (
+            '<div class="admin-bar-row">' +
+              '<span class="admin-bar-label">' + esc(emailTypeLabel(e.type)) + "</span>" +
+              '<div class="admin-bar-track"><div class="admin-bar-fill" style="width:' + pct + '%"></div></div>' +
+              '<span class="admin-bar-value">' + e.count + "</span>" +
+            "</div>"
+          );
+        }).join("") +
+      "</div>"
+    );
+  }
+
+  // Small inline SVG line chart, no library — 14 days, zero-filled so the
+  // line never silently skips a quiet day.
+  function emailTrendChartHTML(dailySeries) {
+    if (!dailySeries || !dailySeries.length) return "";
+    const w = 300, h = 64, pad = 6;
+    const max = Math.max(1, Math.max.apply(null, dailySeries.map(function (d) { return d.count; })));
+    const n = dailySeries.length;
+    const stepX = n > 1 ? (w - pad * 2) / (n - 1) : 0;
+    const points = dailySeries.map(function (d, i) {
+      const x = pad + i * stepX;
+      const y = h - pad - (d.count / max) * (h - pad * 2);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    const firstLabel = dailySeries[0].date.slice(5);
+    const lastLabel = dailySeries[n - 1].date.slice(5);
+    return (
+      '<div class="admin-trend">' +
+        '<svg viewBox="0 0 ' + w + " " + h + '" class="admin-trend-svg" preserveAspectRatio="none">' +
+          '<polyline points="' + points + '" fill="none" stroke="#0093A3" stroke-width="2" ' +
+            'stroke-linejoin="round" stroke-linecap="round" />' +
+        "</svg>" +
+        '<div class="admin-trend-labels"><span>' + esc(firstLabel) + "</span><span>" + esc(lastLabel) + "</span></div>" +
       "</div>"
     );
   }
@@ -2361,15 +2375,13 @@
           "that needs a small event-logging system as a follow-up build, separate from these " +
           "counts (which come straight from the real profiles/likes tables)." +
         "</p>" +
-      "</div>"
-    );
-  }
-
-  function adminTabsHTML() {
-    return (
-      '<div class="view-toggle" style="margin-bottom:14px">' +
-        '<button id="adm-tab-stats" class="' + (adminTab === "stats" ? "active" : "") + '">📊 Stats</button>' +
-        '<button id="adm-tab-outbox" class="' + (adminTab === "outbox" ? "active" : "") + '">✉ Outbox</button>' +
+      "</div>" +
+      '<div class="card" style="margin-top:14px">' +
+        '<h3 style="margin-bottom:12px">Email activity, last 14 days</h3>' +
+        '<div class="deck-hint" style="text-align:left;margin-bottom:2px">Daily volume</div>' +
+        emailTrendChartHTML(adminStats.emailDailySeries) +
+        '<div class="deck-hint" style="text-align:left;margin:16px 0 2px">By type</div>' +
+        emailBarChartHTML(adminStats.emailTotalsByType) +
       "</div>"
     );
   }
@@ -2379,35 +2391,6 @@
       history.replaceState(null, "", location.pathname + location.search);
       boot();
     };
-    document.getElementById("adm-tab-stats").onclick = function () { adminTab = "stats"; viewAdmin(); };
-    document.getElementById("adm-tab-outbox").onclick = function () { adminTab = "outbox"; viewAdmin(); };
-  }
-
-  function viewAdminOutbox() {
-    const emails = store.getEmails();
-    render(
-      brandRow() +
-      '<h2 class="view-title">Founder dashboard</h2>' +
-      '<p class="view-sub">Local activity log for this browser only — welcome/reset/notification ' +
-        "emails also really send via Brevo; this is just a record of what was attempted.</p>" +
-      adminTabsHTML() +
-      (emails.length
-        ? emails.map(function (m) {
-            return (
-              '<div class="card admin-email">' +
-                '<div class="admin-email-head">' +
-                  "<strong>" + esc(m.subject) + "</strong>" +
-                  '<span class="deck-hint" style="margin:0">' + esc(m.sentAt.slice(0, 16).replace("T", " ")) + "</span>" +
-                "</div>" +
-                '<div class="deck-hint" style="margin:2px 0 8px;text-align:left">To: ' + esc(m.to) + "</div>" +
-                '<pre class="admin-email-body">' + esc(m.body) + "</pre>" +
-              "</div>"
-            );
-          }).join("")
-        : '<div class="card"><div class="empty-deck">No emails yet — they’ll appear here as welcome emails and password resets go out.</div></div>') +
-      '<button class="btn btn-ghost" id="adm-back">← Back to the app</button>'
-    );
-    wireAdminChrome();
   }
 
   /* ---------------- Boot ---------------- */

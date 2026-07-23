@@ -716,6 +716,52 @@ label.field input:focus, label.field textarea:focus, label.field select:focus {
 .admin-stat-num { font-size: 22px; font-weight: 800; color: var(--ink); }
 .admin-stat-label { font-size: 12px; color: var(--ink-soft); }
 
+/* ---------- Founder dashboard: email activity charts ---------- */
+.admin-trend { margin-bottom: 4px; }
+.admin-trend-svg {
+  width: 100%;
+  height: 64px;
+  display: block;
+}
+.admin-trend-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+.admin-bar-chart { display: flex; flex-direction: column; gap: 10px; }
+.admin-bar-row {
+  display: grid;
+  grid-template-columns: 118px 1fr 28px;
+  align-items: center;
+  gap: 10px;
+}
+.admin-bar-label {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.admin-bar-track {
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+.admin-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--brand-primary, #00C2CF);
+}
+.admin-bar-value {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: right;
+}
+
 /* ---------- Founder dashboard ---------- */
 .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .admin-table th, .admin-table td {
@@ -757,18 +803,6 @@ label.field input:focus, label.field textarea:focus, label.field select:focus {
 }
 .adm-search:focus { outline: 2px solid var(--brand-primary); border-color: transparent; }
 
-.admin-email { text-align: left; margin-bottom: 12px; padding: 16px; }
-.admin-email-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.admin-email-body {
-  white-space: pre-wrap;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.6;
-  background: var(--surface-alt);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  color: var(--ink);
-}
 
 /* ---------- Toast ---------- */
 .toast {

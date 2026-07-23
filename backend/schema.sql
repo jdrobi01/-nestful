@@ -165,6 +165,29 @@ create policy "members can log their own usage"
   with check (auth.uid() = user_id);
 
 
+-- ---------- email_events ----------
+-- Powers the admin dashboard's email-activity chart (see app.js
+-- viewAdmin / admin-stats Edge Function): how many of each email type
+-- went out, and when. Deliberately holds NO recipient, subject, or
+-- body content — just a type label and a timestamp — so this table
+-- can never become a PII exposure the way the old client-side Outbox
+-- log was. RLS is enabled with ZERO policies for any client role, on
+-- purpose: the only writer is netlify/functions/send-email.js (via
+-- the service_role key, after a real Brevo send succeeds) and the
+-- only reader is the admin-stats Edge Function (same key) — nothing
+-- here is ever reachable through the public anon/authenticated API.
+create table if not exists public.email_events (
+  id         uuid primary key default gen_random_uuid(),
+  type       text not null,
+  created_at timestamptz default now()
+);
+
+alter table public.email_events enable row level security;
+
+create index if not exists email_events_type_created_idx
+  on public.email_events (type, created_at desc);
+
+
 -- ---------- auto-create a profile row on signup ----------
 -- Supabase Auth creates the auth.users row when someone signs up;
 -- this trigger creates the matching (mostly empty) profiles row so
