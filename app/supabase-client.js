@@ -186,6 +186,21 @@ const nestfulDB = (function () {
     await upsertMyProfile({ plus_waitlist: true, plus_waitlist_at: new Date().toISOString() });
   }
 
+  /* ---------- Referral loop (app.js viewInvite) ----------
+     Counts other real profiles whose referred_by points at me. Uses the
+     same broad "profiles are readable by any signed-in member" SELECT
+     policy every other real-matching query already relies on — no new
+     policy or backend function needed. */
+  async function getReferralCount() {
+    const { data: { user } } = await client.auth.getUser();
+    const { count, error } = await client
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("referred_by", user.id);
+    if (error) throw error;
+    return count || 0;
+  }
+
   /* ---------- Hidden founder/admin dashboard (app.js viewAdmin) ----------
      Calls the admin-stats Edge Function, which re-checks profiles.is_admin
      itself server-side before returning anything — being signed in here is
@@ -207,5 +222,6 @@ const nestfulDB = (function () {
     whoLikedMeSinceLastSeen, markNotificationsSeen,
     joinWaitlist,
     getAdminStats,
+    getReferralCount,
   };
 })();

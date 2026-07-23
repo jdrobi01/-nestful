@@ -21,6 +21,18 @@
 
   const ENV = (typeof IS_PRODUCTION_HOST !== "undefined" && IS_PRODUCTION_HOST) ? "production" : "staging";
 
+  /* ---------------- Referral capture ----------------
+     A shared invite link (see viewInvite()) carries ?ref=<inviter's id>.
+     Captured once at load, applied to the new profile right after signup
+     completes (see signup-form's submit handler) via the same RLS-permitted
+     self-upsert every other profile field already uses — no new backend
+     needed. A malformed/missing ref is simply ignored, never blocks signup. */
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const pendingReferralId = (function () {
+    const raw = new URLSearchParams(location.search).get("ref");
+    return raw && UUID_RE.test(raw) ? raw : null;
+  })();
+
   /* ---------------- Storage layer ---------------- */
 
   const PREFIX = BRAND.storagePrefix + (ENV === "staging" ? "-staging" : "");
@@ -102,6 +114,7 @@
     const topMap = {
       premium: "premium", premiumPlan: "premium_plan", premiumSince: "premium_since",
       plusWaitlist: "plus_waitlist", plusWaitlistAt: "plus_waitlist_at",
+      referredBy: "referred_by",
     };
     Object.keys(topMap).forEach(function (k) {
       if (k in patch) out[topMap[k]] = patch[k];
@@ -1168,6 +1181,12 @@
           "(Tip: disable “Confirm email” in Supabase Auth settings for one-step signup during BETA.)");
       }
       sendWelcomeEmail({ name: name, email: email });
+
+      if (pendingReferralId && pendingReferralId !== authUser.id) {
+        updateUser({ referredBy: pendingReferralId }).catch(function () {
+          /* Best-effort — a missed referral credit shouldn't block signup. */
+        });
+      }
 
       draft = freshDraft();
       viewOnbYou();
@@ -2349,6 +2368,7 @@
         "</div>" +
         '<span style="display:flex;gap:2px;align-items:center">' +
           notifBellHTML() +
+          '<button class="btn btn-ghost" id="invite-btn" title="Invite friends">🔗 Invite</button>' +
           '<button class="btn btn-ghost" id="edit-profile-btn">✎ Edit</button>' +
           '<button class="btn btn-ghost" id="sign-out">Sign out</button>' +
         "</span>" +
@@ -2392,6 +2412,7 @@
       adminStatsLoadedFor = null;
       viewLanding();
     };
+    document.getElementById("invite-btn").onclick = function () { viewInvite(user); };
     function startEdit() {
       editMode = true;
       draft = draftFromProfile(p);
@@ -2493,6 +2514,61 @@
       e.stopPropagation();
       viewDetail(key, true);
     };
+  }
+
+  /* ----- Invite friends (referral loop) -----
+     Shares a link carrying ?ref=<my id>, captured by pendingReferralId
+     above and applied to the new profile right after signup — see the
+     signup-form submit handler. */
+
+  function viewInvite(user) {
+    const link = location.origin + location.pathname + "?ref=" + user.id;
+    render(
+      '<button class="btn btn-ghost" id="inv-back" style="width:auto;padding-left:0">← Back to my nest</button>' +
+      '<div class="upgrade-hero">' +
+        '<span class="up-mark">🔗</span>' +
+        "<h2>Invite friends to Nestful</h2>" +
+        '<p class="view-sub">Know someone navigating the “kids or no kids” question the hard way? ' +
+          "Send them your link — they’ll land right on Nestful, ready to sign up.</p>" +
+      "</div>" +
+      '<div class="card">' +
+        '<label class="field">Your invite link' +
+          '<input type="text" id="inv-link" readonly value="' + esc(link) + '"></label>' +
+        '<button class="btn btn-primary" id="inv-copy">Copy link</button>' +
+        '<p class="deck-hint" id="inv-count" style="margin-top:16px">Loading…</p>' +
+      "</div>"
+    );
+
+    document.getElementById("inv-back").onclick = viewHome;
+    document.getElementById("inv-copy").onclick = function () {
+      const $link = document.getElementById("inv-link");
+      $link.select();
+      const done = function () { toast("Link copied ❤"); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(done).catch(function () {
+          document.execCommand("copy");
+          done();
+        });
+      } else {
+        document.execCommand("copy");
+        done();
+      }
+    };
+
+    nestfulDB.getReferralCount()
+      .then(function (count) {
+        const el = document.getElementById("inv-count");
+        if (!el) return;
+        el.textContent =
+          count === 0 ? "No friends have joined yet through your link — share it to start your nest growing." :
+          count === 1 ? "1 friend has joined through your link so far! 🎉" :
+          count + " friends have joined through your link so far! 🎉";
+      })
+      .catch(function (err) {
+        console.error("Couldn't load referral count:", err && (err.message || err));
+        const el = document.getElementById("inv-count");
+        if (el) el.textContent = "Couldn't load your invite count right now.";
+      });
   }
 
   /* ----- Beta cap screen: purposeful limits + Nestful+ waitlist ----- */
