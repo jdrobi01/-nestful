@@ -56,6 +56,13 @@ create table if not exists public.profiles (
   -- through PostgREST/RLS) or from a service-role Edge Function.
   is_admin          boolean not null default false,
 
+  -- Referral loop (see app.js viewInvite): who shared the link this
+  -- member signed up through, if anyone. Low-stakes by design — unlike
+  -- is_admin, this is client-settable (see the existing "members can
+  -- update their own profile" policy below) since it powers a simple
+  -- invite counter, not anything security- or payment-sensitive.
+  referred_by       uuid references public.profiles(id),
+
   created_at        timestamptz default now()
 );
 
@@ -66,6 +73,8 @@ alter table public.profiles
   add column if not exists last_notifications_seen_at timestamptz default now();
 alter table public.profiles
   add column if not exists is_admin boolean not null default false;
+alter table public.profiles
+  add column if not exists referred_by uuid references public.profiles(id);
 
 alter table public.profiles enable row level security;
 
